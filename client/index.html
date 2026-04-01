@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>TangoLive – Go Live, Connect, Earn</title>
+  <meta name="description"
+    content="TangoLive – a premium mobile-first live streaming platform. Watch live, go live, send gifts, and earn coins." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- ───────── AUTH OVERLAY ───────── -->
+  <div id="auth-overlay" class="auth-overlay hidden">
+    <div class="auth-modal glass">
+      <div class="auth-logo">
+        <span class="logo-icon">🎭</span>
+        <h1>TangoLive</h1>
+      </div>
+
+      <!-- Login Form -->
+      <form id="login-form" class="auth-form">
+        <h2>Welcome Back</h2>
+        <p class="auth-sub">Sign in to continue</p>
+        <div class="form-group">
+          <input type="email" id="login-email" placeholder="Email" required />
+        </div>
+        <div class="form-group">
+          <input type="password" id="login-password" placeholder="Password" required />
+        </div>
+        <button type="submit" class="btn-primary w-full">Sign In</button>
+        <p class="auth-switch">No account? <span onclick="showAuthForm('register')">Register</span></p>
+        <p class="auth-switch"><span onclick="hideAuthOverlay()">Continue as Guest</span></p>
+        <div id="login-error" class="error-msg hidden"></div>
+      </form>
+
+      <!-- Register Form -->
+      <form id="register-form" class="auth-form hidden">
+        <h2>Join TangoLive</h2>
+        <p class="auth-sub">Start your streaming journey</p>
+        <div class="form-group">
+          <input type="text" id="reg-username" placeholder="Username" required />
+        </div>
+        <div class="form-group">
+          <input type="email" id="reg-email" placeholder="Email" required />
+        </div>
+        <div class="form-group">
+          <input type="password" id="reg-password" placeholder="Password (min 6 chars)" required />
+        </div>
+        <button type="submit" class="btn-primary w-full">Create Account</button>
+        <p class="auth-switch">Already registered? <span onclick="showAuthForm('login')">Login</span></p>
+        <div id="reg-error" class="error-msg hidden"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ───────── GUEST TIMER POPUP ───────── -->
+  <div id="guest-timer-popup" class="guest-popup hidden">
+    <div class="guest-popup-inner glass">
+      <span class="popup-icon">⏱️</span>
+      <h3>Free Preview Ending</h3>
+      <p>You have <strong><span id="guest-timer-count">5:00</span></strong> left as a guest.</p>
+      <button class="btn-primary" onclick="showAuthOverlay('register')">Sign Up Free</button>
+      <button class="btn-ghost" onclick="showAuthOverlay('login')">Already have an account?</button>
+    </div>
+  </div>
+
+  <!-- ───────── APP WRAPPER ───────── -->
+  <div id="app">
+
+    <!-- ══ TOP BAR ══ -->
+    <header class="top-bar">
+      <div class="top-bar-left">
+        <span class="logo-icon">🎭</span>
+        <span class="logo-text">TangoLive</span>
+      </div>
+      <div class="top-bar-right">
+        <button class="icon-btn" id="search-btn" title="Search">🔍</button>
+        <button class="icon-btn" id="notif-btn" title="Notifications">🔔</button>
+        <div id="user-avatar-top" class="user-avatar-sm" onclick="navigateTo('profile')"></div>
+      </div>
+    </header>
+
+    <!-- ══ CONTENT PANELS ══ -->
+    <main id="main-content">
+
+      <!-- ── HOME SCREEN ── -->
+      <section id="screen-home" class="screen active">
+        <div class="category-bar">
+          <button class="cat-pill active" data-cat="all">🔥 All</button>
+          <button class="cat-pill" data-cat="gaming">🎮 Gaming</button>
+          <button class="cat-pill" data-cat="music">🎵 Music</button>
+          <button class="cat-pill" data-cat="talk">💬 Talk</button>
+          <button class="cat-pill" data-cat="dance">💃 Dance</button>
+          <button class="cat-pill" data-cat="cooking">🍳 Cooking</button>
+        </div>
+        <div id="stream-feed" class="stream-feed">
+          <div class="feed-loading">
+            <div class="spinner"></div>
+            <p>Loading streams...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── GO LIVE SCREEN ── -->
+      <section id="screen-golive" class="screen hidden">
+        <div class="golive-container">
+          <h2 class="screen-title">Start Your Stream</h2>
+          <div class="camera-preview-wrap">
+            <video id="camera-preview" autoplay muted playsinline></video>
+            <div class="camera-overlay">
+              <span class="preview-label">PREVIEW</span>
+            </div>
+          </div>
+          <div class="golive-form glass">
+            <div class="form-group">
+              <label>Stream Title</label>
+              <input type="text" id="stream-title" placeholder="What are you streaming today?" />
+            </div>
+            <div class="form-group">
+              <label>Category</label>
+              <select id="stream-category">
+                <option value="General">🌐 General</option>
+                <option value="Gaming">🎮 Gaming</option>
+                <option value="Music">🎵 Music</option>
+                <option value="Talk">💬 Talk</option>
+                <option value="Dance">💃 Dance</option>
+                <option value="Cooking">🍳 Cooking</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Stream Type</label>
+              <div class="stream-type-picker">
+                <button class="type-btn active" data-type="public">🌍 Public</button>
+                <button class="type-btn" data-type="private">🔒 Private</button>
+                <button class="type-btn" data-type="group">👥 Group</button>
+              </div>
+            </div>
+            <button id="go-live-btn" class="btn-primary btn-live w-full">
+              <span class="live-dot-anim"></span> GO LIVE
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ACTIVE LIVE STREAM SCREEN ── -->
+      <section id="screen-live" class="screen hidden screen-fullscreen">
+        <div class="live-container">
+          <!-- Video -->
+          <div id="video-area" class="video-area">
+            <video id="remote-video" autoplay playsinline class="live-video"></video>
+            <video id="local-video" autoplay muted playsinline class="live-video hidden"></video>
+            <div id="reaction-overlay" class="reaction-overlay"></div>
+          </div>
+
+          <!-- Top HUD -->
+          <div class="live-hud-top">
+            <button class="back-btn" onclick="leaveLiveScreen()">←</button>
+            <div class="hud-info">
+              <div class="hud-stream-title" id="hud-title">Stream Title</div>
+              <div class="hud-meta">
+                <span class="live-badge">LIVE</span>
+                <span class="viewer-count">👁 <span id="hud-viewers">0</span></span>
+              </div>
+            </div>
+            <div class="hud-host">
+              <div class="host-avatar" id="hud-host-avatar"></div>
+              <span id="hud-host-name">Host</span>
+            </div>
+          </div>
+
+          <!-- Right: Gift + Reaction buttons -->
+          <div class="live-actions-right">
+            <button class="action-btn" onclick="sendReaction('❤️')" title="Heart">❤️</button>
+            <button class="action-btn" onclick="sendReaction('🔥')" title="Fire">🔥</button>
+            <button class="action-btn" onclick="toggleGiftPanel()" title="Gift">🎁</button>
+            <button class="action-btn" onclick="sendReaction('🎉')" title="Celebrate">🎉</button>
+          </div>
+
+          <!-- Gift Panel -->
+          <div id="gift-panel" class="gift-panel glass hidden">
+            <h4>Send a Gift</h4>
+            <div id="gift-list" class="gift-list"></div>
+          </div>
+
+          <!-- End Stream button (only for host) -->
+          <button id="end-stream-btn" class="btn-danger btn-end-stream hidden" onclick="endStream()">
+            ■ End Stream
+          </button>
+
+          <!-- Bottom: Chat -->
+          <div class="live-chat-area">
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input-row">
+              <input type="text" id="chat-input" placeholder="Say something..." />
+              <button id="chat-send-btn" onclick="sendChatMessage('live')">➤</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Join Request Notification (for host) -->
+        <div id="join-request-toast" class="join-toast hidden">
+          <div class="join-toast-inner glass">
+            <span id="join-req-username">username</span> wants to join
+            <div class="join-toast-actions">
+              <button class="btn-sm btn-success" onclick="respondToJoinRequest(true)">✓ Allow</button>
+              <button class="btn-sm btn-danger" onclick="respondToJoinRequest(false)">✗ Deny</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── CHAT SCREEN (List) ── -->
+      <section id="screen-chat" class="screen hidden">
+        <div class="screen-inner">
+          <h2 class="screen-title">Messages</h2>
+          <div id="chat-list" class="chat-list" style="margin-top:20px;display:flex;flex-direction:column;gap:12px;">
+            <!-- Fetched conversations will appear here -->
+            <div class="feed-loading">📡 Loading conversations...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── CHAT THREAD SCREEN ── -->
+      <section id="screen-chat-thread" class="screen screen-fullscreen hidden" style="background:var(--bg-dark)">
+        <div class="chat-thread-header top-bar">
+          <div class="top-bar-left">
+            <button class="icon-btn" onclick="navigateTo('chat')">←</button>
+            <div id="chat-thread-partner-avatar" class="user-avatar-sm">?</div>
+            <div id="chat-thread-partner-name" style="font-weight:700">Name</div>
+          </div>
+        </div>
+        <div id="chat-thread-messages"
+          style="flex:1; overflow-y:auto; padding:80px 16px 80px; display:flex; flex-direction:column; gap:12px;">
+          <!-- Messages will appear here -->
+        </div>
+        <div class="chat-input-row glass"
+          style="position:fixed; bottom:0; padding:12px; display:flex; gap:10px; width:100%; max-width:480px; left:50%; transform:translateX(-50%); z-index:100">
+          <input type="text" id="chat-thread-input" placeholder="Type a message..." style="flex:1"
+            onkeypress="if(event.key==='Enter') sendDirectMessage()">
+          <button class="btn-primary" onclick="sendDirectMessage()" style="padding:10px 15px">Send</button>
+        </div>
+      </section>
+
+      <!-- ── WALLET SCREEN ── -->
+      <section id="screen-wallet" class="screen hidden">
+        <div class="screen-inner">
+          <h2 class="screen-title">My Wallet</h2>
+          <div class="wallet-balance-card glass">
+            <div class="balance-icon">🪙</div>
+            <div class="balance-val" id="wallet-balance">—</div>
+            <div class="balance-label">Tango Coins</div>
+            <button class="btn-primary mt-1" onclick="showWithdrawModal()">💸 Request Withdrawal</button>
+          </div>
+
+          <h3 class="section-sub-title">Get More Coins</h3>
+          <div class="coin-packages">
+            <div class="coin-pkg glass" onclick="buyCoins(500)">
+              <div class="pkg-amt">500 🪙</div>
+              <div class="pkg-price">$4.99</div>
+            </div>
+            <div class="coin-pkg glass" onclick="buyCoins(1200)">
+              <div class="pkg-amt">1,200 🪙</div>
+              <div class="pkg-price">$9.99</div>
+            </div>
+            <div class="coin-pkg glass" onclick="buyCoins(2500)">
+              <div class="pkg-amt">2,500 🪙</div>
+              <div class="pkg-price">$19.99</div>
+            </div>
+          </div>
+
+          <h3 class="section-sub-title">Transaction History</h3>
+          <div id="wallet-transactions" class="wallet-txns"></div>
+        </div>
+      </section>
+
+      <!-- ── PROFILE SCREEN ── -->
+      <section id="screen-profile" class="screen hidden">
+        <div class="screen-inner">
+          <div id="profile-guest-msg" class="profile-guest hidden">
+            <span class="empty-icon">👤</span>
+            <p>You're browsing as a guest</p>
+            <button class="btn-primary" onclick="showAuthOverlay('register')">Create Account</button>
+            <button class="btn-ghost" onclick="showAuthOverlay('login')">Log In</button>
+          </div>
+          <div id="profile-user" class="profile-user hidden">
+            <div class="profile-header">
+              <div class="profile-avatar-lg" id="profile-avatar-el"></div>
+              <h2 id="profile-username">Username</h2>
+              <p id="profile-email" class="profile-email"></p>
+            </div>
+            <div class="profile-stats glass">
+              <div class="stat-item">
+                <div class="stat-val" id="profile-followers">0</div>
+                <div class="stat-key">Followers</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-val" id="profile-coins">0</div>
+                <div class="stat-key">Coins</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-val" id="profile-streams">0</div>
+                <div class="stat-key">Streams</div>
+              </div>
+            </div>
+            <div class="profile-actions">
+              <button class="btn-primary" onclick="navigateTo('golive')">🎥 Go Live</button>
+              <button class="btn-ghost" onclick="logout()">🚪 Logout</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ══ BOTTOM NAVIGATION ══ -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-screen="home" onclick="navigateTo('home')">
+        <span class="nav-icon">🏠</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button class="nav-item" data-screen="golive" onclick="navigateTo('golive')">
+        <span class="nav-icon">📡</span>
+        <span class="nav-label">Go Live</span>
+      </button>
+      <button class="nav-item" data-screen="chat" onclick="navigateTo('chat')">
+        <span class="nav-icon">💬</span>
+        <span class="nav-label">Chat</span>
+      </button>
+      <button class="nav-item" data-screen="wallet" onclick="navigateTo('wallet')">
+        <span class="nav-icon">💰</span>
+        <span class="nav-label">Wallet</span>
+      </button>
+      <button class="nav-item" data-screen="profile" onclick="navigateTo('profile')">
+        <span class="nav-icon">👤</span>
+        <span class="nav-label">Profile</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ══ WITHDRAWAL MODAL ══ -->
+  <div id="withdraw-modal" class="modal-overlay hidden">
+    <div class="modal-box glass">
+      <h3>Request Withdrawal</h3>
+      <p>Enter the amount of coins to withdraw:</p>
+      <input type="number" id="withdraw-amount" placeholder="Min 100 coins" min="100" />
+      <div class="modal-actions">
+        <button class="btn-primary" onclick="submitWithdrawal()">Submit</button>
+        <button class="btn-ghost" onclick="closeModal('withdraw-modal')">Cancel</button>
+      </div>
+      <div id="withdraw-msg" class="error-msg hidden"></div>
+    </div>
+  </div>
+
+  <!-- ══ JOIN REQUEST MODAL (for viewers of private/group) ══ -->
+  <div id="joinreq-modal" class="modal-overlay hidden">
+    <div class="modal-box glass">
+      <span class="popup-icon">🔒</span>
+      <h3>Private Stream</h3>
+      <p>This stream requires host approval to join.</p>
+      <div id="joinreq-status" class="joinreq-status">Waiting for host...</div>
+      <button class="btn-ghost" onclick="closeModal('joinreq-modal')">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

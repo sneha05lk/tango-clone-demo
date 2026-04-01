@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: tango-live-clone
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: ./server/data/tangolive.db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
