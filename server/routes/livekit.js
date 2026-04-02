@@ -3,6 +3,6 @@ const router = express.Router();
 const { getToken } = require('../controllers/livekitController');
 const { protect } = require('../middlewares/auth');
 
-router.post('/token', protect, getToken);
+router.post('/token', getToken);
 
 module.exports = router;

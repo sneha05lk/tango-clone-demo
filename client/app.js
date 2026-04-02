@@ -82,7 +82,8 @@ function createGlobalErrorContainer() {
 // ─── SOCKET INIT ─────────────────────────────────────────────────────
 function initSocket() {
     if (socket) return;
-    socket = io({ auth: { token: token || null }, transports: ['websocket'] });
+    // Remove transport restriction to allow polling fallback for better stability on unstable networks
+    socket = io({ auth: { token: token || null } });
 
     socket.on('viewer-count', ({ count }) => {
         $('hud-viewers').textContent = count;
@@ -224,7 +225,13 @@ function saveSession(user) {
 function afterLogin() {
     clearGuestTimer();
     $('guest-timer-popup').classList.add('hidden');
-    socket = null;
+    
+    // Explicitly disconnect old guest socket before creating a new authenticated one
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+    
     initSocket();
     renderTopBar();
     navigateTo('home');
@@ -253,6 +260,7 @@ function showError(id, msg) {
 let guestSecondsLeft = 5 * 60;
 function startGuestTimer() {
     if (currentUser) return;
+    clearGuestTimer(); // Ensure only one timer is running at a time
     guestSecondsLeft = 5 * 60;
     const popup = $('guest-timer-popup');
     popup.classList.remove('hidden');
@@ -405,18 +413,24 @@ function enterLiveScreen(stream) {
     initSocket();
     joinRoom(stream.livekit_room);
 
-    // Fetch LiveKit token and connect
-    if (currentUser) {
-        apiReq('POST', '/api/livekit/token', {
-            room: stream.livekit_room,
-            identity: currentUser.username,
-            canPublish: isHost
-        }).then(data => {
-            connectToLiveKit(data.token, stream.livekit_room);
-        }).catch(err => {
-            console.error('Failed to get LiveKit token:', err);
-        });
-    }
+    // Explicitly reset video layer visibility for the current role
+    $('remote-video').classList.toggle('hidden', isHost);
+    $('local-video').classList.toggle('hidden', !isHost);
+
+    // Fetch LiveKit token and connect (now allowing guests!)
+    apiReq('POST', '/api/livekit/token', {
+        room: stream.livekit_room,
+        identity: currentUser ? currentUser.username : null, // Controller will fallback for guest
+        canPublish: isHost
+    }).then(data => {
+        connectToLiveKit(data.token, stream.livekit_room);
+    }).catch(err => {
+        console.error('Failed to get LiveKit token:', err);
+        // If guest, show a login hint?
+        if (!currentUser) {
+            appendChat('System', 'You are watching as a guest. Log in to chat and send gifts!', true);
+        }
+    });
 
     // Load gifts
     loadGifts();
@@ -441,6 +455,7 @@ async function connectToLiveKit(token, roomName) {
     livekitRoom
         .on(LivekitClient.RoomEvent.TrackSubscribed, handleTrackSubscribed)
         .on(LivekitClient.RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed)
+        .on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, handleAudioPlaybackStatus)
         .on(LivekitClient.RoomEvent.Disconnected, () => {
             console.log('Disconnected from LiveKit');
         });
@@ -450,10 +465,12 @@ async function connectToLiveKit(token, roomName) {
         const livekitUrl = config.livekitUrl;
         
         await livekitRoom.connect(livekitUrl, token);
-
         console.log('Connected to LiveKit room:', roomName);
 
-        if (isHost && mediaStream) {
+        if (isHost) {
+            // Stop existing preview to free up camera/mic Device for LiveKit
+            stopCamera();
+            
             // Publish local tracks
             const tracks = await LivekitClient.createLocalTracks({
                 audio: true,
@@ -461,6 +478,11 @@ async function connectToLiveKit(token, roomName) {
             });
             for (const track of tracks) {
                 await livekitRoom.localParticipant.publishTrack(track);
+                if (track.kind === 'video') {
+                   const localVideo = $('local-video');
+                   localVideo.classList.remove('hidden');
+                   track.attach(localVideo);
+                }
             }
             console.log('Local tracks published');
         }
@@ -471,19 +493,77 @@ async function connectToLiveKit(token, roomName) {
 }
 
 function handleTrackSubscribed(track, publication, participant) {
-    if (track.kind === LivekitClient.Track.Kind.Video) {
+    console.log('Track subscribed:', track.kind, participant.identity);
+    if (track.kind === 'video') {
         const remoteVideo = $('remote-video');
         remoteVideo.classList.remove('hidden');
         track.attach(remoteVideo);
-    } else if (track.kind === LivekitClient.Track.Kind.Audio) {
+        // Explicitly play to bypass some browser hesitation
+        remoteVideo.play().catch(e => console.warn('Autoplay prevented video:', e));
+    } else if (track.kind === 'audio') {
         track.attach();
+        // Check if audio playback is permitted
+        if (!livekitRoom.canPlaybackAudio) {
+            showAudioPrompt();
+        }
     }
 }
 
 function handleTrackUnsubscribed(track, publication, participant) {
     track.detach();
-    if (track.kind === LivekitClient.Track.Kind.Video) {
+    if (track.kind === 'video') {
         $('remote-video').classList.add('hidden');
+    }
+}
+
+function handleAudioPlaybackStatus() {
+    if (livekitRoom.canPlaybackAudio) {
+        hideAudioPrompt();
+    } else {
+        showAudioPrompt();
+    }
+}
+
+function showAudioPrompt() {
+    const prompt = $('audio-prompt') || createAudioPrompt();
+    prompt.classList.remove('hidden');
+}
+
+function hideAudioPrompt() {
+    const prompt = $('audio-prompt');
+    if (prompt) prompt.classList.add('hidden');
+}
+
+function createAudioPrompt() {
+    const div = document.createElement('div');
+    div.id = 'audio-prompt';
+    div.className = 'audio-autoplay-prompt glass';
+    div.innerHTML = `
+        <span class="prompt-icon">🔊</span>
+        <p>Audio is muted by browser</p>
+        <button class="btn-primary btn-sm" onclick="resumeAudio()">Unmute</button>
+    `;
+    div.style.cssText = `
+        position: absolute;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        padding: 12px 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        text-align: center;
+    `;
+    $('screen-live').appendChild(div);
+    return div;
+}
+
+async function resumeAudio() {
+    if (livekitRoom) {
+        await livekitRoom.startAudio();
+        hideAudioPrompt();
     }
 }
 
@@ -550,10 +630,8 @@ $('go-live-btn').addEventListener('click', async () => {
         enterLiveScreen(stream);
         connectToLiveKit(tkData.token, stream.livekit_room);
 
-        // Show local camera on live screen
-        const localVideo = $('local-video');
-        localVideo.classList.remove('hidden');
-        if (mediaStream) localVideo.srcObject = mediaStream;
+        // We don't set localVideo.srcObject here anymore because connectToLiveKit
+        // will handle track publication and display
         $('remote-video').classList.add('hidden');
     } catch (err) {
         alert('Failed to go live: ' + err.message);
