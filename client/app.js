@@ -467,6 +467,17 @@ async function connectToLiveKit(token, roomName) {
         await livekitRoom.connect(livekitUrl, token);
         console.log('Connected to LiveKit room:', roomName);
 
+        // Check if audio is already blocked at start
+        if (!isHost && !livekitRoom.canPlaybackAudio) {
+            console.warn('Audio blocked immediately on connect. Showing prompt.');
+            showAudioPrompt();
+        }
+        
+        // Try to start audio immediately since the user just clicked a stream card (user gesture)
+        if (!isHost) {
+            livekitRoom.startAudio().catch(e => console.warn('Early startAudio failed:', e));
+        }
+
         if (isHost) {
             // Stop existing preview to free up camera/mic Device for LiveKit
             stopCamera();
@@ -478,13 +489,14 @@ async function connectToLiveKit(token, roomName) {
             });
             for (const track of tracks) {
                 await livekitRoom.localParticipant.publishTrack(track);
+                console.log(`[Host] Local ${track.kind} track published`);
                 if (track.kind === 'video') {
                    const localVideo = $('local-video');
                    localVideo.classList.remove('hidden');
                    track.attach(localVideo);
                 }
             }
-            console.log('Local tracks published');
+            console.log('Host tracks active and publishing');
         }
     } catch (error) {
         console.error('Failed to connect to LiveKit:', error);
@@ -501,11 +513,20 @@ function handleTrackSubscribed(track, publication, participant) {
         // Explicitly play to bypass some browser hesitation
         remoteVideo.play().catch(e => console.warn('Autoplay prevented video:', e));
     } else if (track.kind === 'audio') {
-        track.attach();
-        // Check if audio playback is permitted
-        if (!livekitRoom.canPlaybackAudio) {
+        const audioId = `audio-track-${participant.identity}`;
+        let existing = $(audioId);
+        if (existing) existing.remove();
+
+        const el = track.attach();
+        el.id = audioId;
+        // Make sure it's not and stays visible or playing
+        document.body.appendChild(el); 
+        el.play().catch(e => {
+            console.warn('Initial audio play() failed, waiting for user gesture:', e);
             showAudioPrompt();
-        }
+        });
+        
+        console.log('Audio track attached and active for:', participant.identity);
     }
 }
 
@@ -517,6 +538,7 @@ function handleTrackUnsubscribed(track, publication, participant) {
 }
 
 function handleAudioPlaybackStatus() {
+    console.log('Audio playback status changed. Can playback:', livekitRoom.canPlaybackAudio);
     if (livekitRoom.canPlaybackAudio) {
         hideAudioPrompt();
     } else {
@@ -525,8 +547,11 @@ function handleAudioPlaybackStatus() {
 }
 
 function showAudioPrompt() {
-    const prompt = $('audio-prompt') || createAudioPrompt();
+    let prompt = $('audio-prompt');
+    if (!prompt) prompt = createAudioPrompt();
     prompt.classList.remove('hidden');
+    // For some browsers, adding interaction hint helps
+    console.warn('Audio is blocked by browser. Showing unmute prompt.');
 }
 
 function hideAudioPrompt() {
@@ -537,33 +562,33 @@ function hideAudioPrompt() {
 function createAudioPrompt() {
     const div = document.createElement('div');
     div.id = 'audio-prompt';
-    div.className = 'audio-autoplay-prompt glass';
+    div.className = 'audio-unlock-overlay hidden';
     div.innerHTML = `
-        <span class="prompt-icon">🔊</span>
-        <p>Audio is muted by browser</p>
-        <button class="btn-primary btn-sm" onclick="resumeAudio()">Unmute</button>
+        <div class="audio-prompt-content glass">
+            <div class="prompt-icon-ring">
+                <span class="prompt-icon-large">🔇</span>
+            </div>
+            <h3>Audio is Muted</h3>
+            <p>Your browser is blocking sound.</p>
+            <button class="btn-primary" onclick="resumeAudio()">
+                Tap to Unmute
+            </button>
+        </div>
     `;
-    div.style.cssText = `
-        position: absolute;
-        bottom: 100px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 100;
-        padding: 12px 20px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        text-align: center;
-    `;
-    $('screen-live').appendChild(div);
+    // Append to body to ensure it's not hidden by container overflow
+    document.body.appendChild(div);
     return div;
 }
 
 async function resumeAudio() {
     if (livekitRoom) {
-        await livekitRoom.startAudio();
-        hideAudioPrompt();
+        try {
+            await livekitRoom.startAudio();
+            console.log('Audio manually resumed by user');
+            hideAudioPrompt();
+        } catch (err) {
+            console.error('Failed to resume audio:', err);
+        }
     }
 }
 

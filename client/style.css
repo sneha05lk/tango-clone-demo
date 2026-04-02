@@ -1343,3 +1343,63 @@ select option {
 .hidden {
   display: none !important;
 }
+/* --- AUDIO UNLOCK OVERLAY -------------------------------------- */
+.audio-unlock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  animation: fadeInPrompt 0.3s ease;
+}
+
+.audio-prompt-content {
+  width: 280px;
+  padding: 30px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  background: #111;
+}
+
+.prompt-icon-ring {
+  width: 64px;
+  height: 64px;
+  border-radius: 32px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 2px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.prompt-icon-large {
+  font-size: 2rem;
+}
+
+.audio-prompt-content h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.audio-prompt-content p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.btn-unmute {
+  width: 100%;
+}
+
+@keyframes fadeInPrompt {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
