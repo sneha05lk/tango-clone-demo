@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const {
     getStreams, getAllStreams, getStreamById, createStream, endStream,
-    requestJoin, handleRequest, getRequests
+    requestJoin, handleRequest, getRequests, searchStreams
 } = require('../controllers/streamController');
 const { protect } = require('../middlewares/auth');
 
 router.get('/', getStreams);                             // public streams (no auth)
 router.get('/all', protect, getAllStreams);              // all streams (authenticated)
+router.get('/search', searchStreams);                    // search streams
 router.get('/:id', getStreamById);
 router.post('/', protect, createStream);
 router.put('/:id/end', protect, endStream);

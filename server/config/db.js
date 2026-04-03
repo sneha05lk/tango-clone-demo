@@ -32,6 +32,7 @@ const initDB = () => {
       coin_balance INTEGER DEFAULT 1000,
       role TEXT DEFAULT 'user',
       avatar TEXT DEFAULT '',
+      bio TEXT DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -117,6 +118,18 @@ const initDB = () => {
       FOREIGN KEY(follower_id) REFERENCES users(id),
       FOREIGN KEY(following_id) REFERENCES users(id)
     )`);
+
+    // Check if 'bio' column exists, add if not
+    db.all("PRAGMA table_info(users)", (err, columns) => {
+      if (!err) {
+        const hasBio = columns.some(col => col.name === 'bio');
+        if (!hasBio) {
+          db.run("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''", (err) => {
+            if (!err) console.log('Fixed users table: Added bio column.');
+          });
+        }
+      }
+    });
 
 
     // Seed default gifts

@@ -80,7 +80,10 @@
         <span class="logo-text">TangoLive</span>
       </div>
       <div class="top-bar-right">
-        <button class="icon-btn" id="search-btn" title="Search">🔍</button>
+        <div class="search-bar-wrap">
+          <button class="icon-btn search-trigger">🔍</button>
+          <input type="text" id="global-search" placeholder="Search streams or users..." />
+        </div>
         <button class="icon-btn" id="notif-btn" title="Notifications">🔔</button>
         <div id="user-avatar-top" class="user-avatar-sm" onclick="navigateTo('profile')"></div>
       </div>
@@ -93,6 +96,7 @@
       <section id="screen-home" class="screen active">
         <div class="category-bar">
           <button class="cat-pill active" data-cat="all">🔥 All</button>
+          <button class="cat-pill" data-cat="following">🤝 Following</button>
           <button class="cat-pill" data-cat="gaming">🎮 Gaming</button>
           <button class="cat-pill" data-cat="music">🎵 Music</button>
           <button class="cat-pill" data-cat="talk">💬 Talk</button>
@@ -170,7 +174,10 @@
             </div>
             <div class="hud-host">
               <div class="host-avatar" id="hud-host-avatar"></div>
-              <span id="hud-host-name">Host</span>
+              <div class="host-meta-wrap">
+                <span id="hud-host-name">Host</span>
+                <button id="hud-follow-btn" class="btn-follow-sm hidden" onclick="toggleFollow()">+ Follow</button>
+              </div>
             </div>
           </div>
 
@@ -300,18 +307,89 @@
                 <div class="stat-key">Followers</div>
               </div>
               <div class="stat-item">
-                <div class="stat-val" id="profile-coins">0</div>
-                <div class="stat-key">Coins</div>
+                <div class="stat-val" id="profile-following">0</div>
+                <div class="stat-key">Following</div>
               </div>
               <div class="stat-item">
-                <div class="stat-val" id="profile-streams">0</div>
-                <div class="stat-key">Streams</div>
+                <div class="stat-val" id="profile-wallet">0</div>
+                <div class="stat-key">Wallet</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-val" id="profile-earned">0</div>
+                <div class="stat-key">Earnings</div>
               </div>
             </div>
             <div class="profile-actions">
-              <button class="btn-primary" onclick="navigateTo('golive')">🎥 Go Live</button>
               <button class="btn-ghost" onclick="logout()">🚪 Logout</button>
             </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- ── PROFILE EDITOR MODAL ── -->
+      <div id="profile-modal" class="modal-overlay hidden">
+        <div class="modal-box glass">
+          <h3>Edit Profile</h3>
+          <div class="form-group">
+            <label>Avatar URL</label>
+            <input type="text" id="edit-avatar" placeholder="https://image-url..." />
+          </div>
+          <div class="form-group">
+            <label>Bio</label>
+            <textarea id="edit-bio" placeholder="Tell the world about yourself..." rows="3"></textarea>
+          </div>
+          <div class="modal-actions">
+            <button class="btn-primary" onclick="saveProfile()">Save Changes</button>
+            <button class="btn-ghost" onclick="closeModal('profile-modal')">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── USER PROFILE VIEW SCREEN ── -->
+      <section id="screen-view-profile" class="screen hidden">
+        <div class="screen-inner">
+          <header class="profile-header-alt">
+            <button class="back-btn-alt" onclick="navigateTo('home')">←</button>
+            <h2 class="screen-title" style="margin-bottom:0">Profile</h2>
+          </header>
+          
+          <div class="profile-main-card glass" style="margin-top:20px; padding:30px 20px; text-align:center;">
+            <div class="profile-avatar-xl" id="v-profile-avatar"></div>
+            <h2 id="v-profile-username" style="margin: 15px 0 5px; font-size:1.6rem;">Username</h2>
+            <p id="v-profile-bio" class="profile-bio" style="color:var(--text-muted); font-size:0.95rem; margin-bottom:20px;">No bio provided.</p>
+            
+            <div class="profile-stats-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:25px;">
+              <div class="stat-item">
+                <div class="stat-val" id="v-profile-followers" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Followers</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-val" id="v-profile-following" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Following</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-val" id="v-profile-coins" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Earned</div>
+              </div>
+            </div>
+            
+            <div class="profile-view-actions" style="display:flex; flex-direction:column; gap:10px;">
+              <button id="v-follow-btn" class="btn-primary w-full" onclick="toggleFollowProfile()" style="padding:14px;">+ Follow</button>
+              <button class="btn-ghost w-full" id="v-message-btn" style="padding:12px;">💬 Send Message</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── FOLLOW LIST SCREEN ── -->
+      <section id="screen-follow-list" class="screen hidden">
+        <div class="screen-inner">
+          <header class="profile-header-alt">
+            <button class="back-btn-alt" onclick="goBackFromFollowList()">←</button>
+            <h2 id="follow-list-title" class="screen-title" style="margin-bottom:0">List</h2>
+          </header>
+          <div id="follow-list-content" class="follow-list-container" style="margin-top:20px;">
+            <div class="feed-loading">📡 Loading list...</div>
           </div>
         </div>
       </section>

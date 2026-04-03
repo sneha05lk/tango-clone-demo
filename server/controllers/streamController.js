@@ -15,14 +15,49 @@ const getStreams = (req, res) => {
     );
 };
 
-// GET /api/streams/all - list all streams (incl. group/private) for authenticated users
+// GET /api/streams/all - list all streams (incl. group/private) for authenticated users or special categories
 const getAllStreams = (req, res) => {
+    const { category } = req.query;
+
+    if (category === 'following' && req.user) {
+        db.all(
+            `SELECT s.*, u.username, u.avatar FROM streams s
+             JOIN users u ON s.host_id = u.id
+             JOIN followers f ON f.following_id = s.host_id
+             WHERE s.is_live = 1 AND f.follower_id = ?
+             ORDER BY s.viewer_count DESC`,
+            [req.user.id],
+            (err, rows) => {
+                if (err) return res.status(500).json({ message: err.message });
+                res.json(rows);
+            }
+        );
+    } else {
+        db.all(
+            `SELECT s.*, u.username, u.avatar FROM streams s
+             JOIN users u ON s.host_id = u.id
+             WHERE s.is_live = 1
+             ORDER BY s.viewer_count DESC`,
+            [],
+            (err, rows) => {
+                if (err) return res.status(500).json({ message: err.message });
+                res.json(rows);
+            }
+        );
+    }
+};
+
+// GET /api/streams/search?q=query
+const searchStreams = (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.json([]);
+
     db.all(
         `SELECT s.*, u.username, u.avatar FROM streams s
-     JOIN users u ON s.host_id = u.id
-     WHERE s.is_live = 1
-     ORDER BY s.viewer_count DESC`,
-        [],
+         JOIN users u ON s.host_id = u.id
+         WHERE s.is_live = 1 AND (s.title LIKE ? OR u.username LIKE ?)
+         ORDER BY s.viewer_count DESC`,
+        [`%${query}%`, `%${query}%`],
         (err, rows) => {
             if (err) return res.status(500).json({ message: err.message });
             res.json(rows);
@@ -125,4 +160,14 @@ const getRequests = (req, res) => {
     );
 };
 
-module.exports = { getStreams, getAllStreams, getStreamById, createStream, endStream, requestJoin, handleRequest, getRequests };
+module.exports = {
+    getStreams,
+    getAllStreams,
+    getStreamById,
+    createStream,
+    endStream,
+    requestJoin,
+    handleRequest,
+    getRequests,
+    searchStreams
+};

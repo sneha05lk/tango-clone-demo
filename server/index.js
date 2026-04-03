@@ -16,6 +16,7 @@ const walletRoutes = require('./routes/wallet');
 const adminRoutes = require('./routes/admin');
 const livekitRoutes = require('./routes/livekit');
 const messageRoutes = require('./routes/messages');
+const userRoutes = require('./routes/users');
 
 const app = express();
 const server = http.createServer(app);
@@ -42,6 +43,7 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/livekit', livekitRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/users', userRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
@@ -69,6 +71,17 @@ socketHandler(io);
 // Initialize DB then start server
 const PORT = process.env.PORT || 3000;
 initDB();
+
+server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.warn(`\n⚠️  Port ${PORT} is busy, trying ${parseInt(PORT) + 1}...`);
+        setTimeout(() => {
+            server.close();
+            server.listen(parseInt(PORT) + 1);
+        }, 1000);
+    }
+});
+
 server.listen(PORT, () => {
     console.log(`\n🚀 TangoLive server running at http://localhost:${PORT}`);
     console.log(`📺 Admin panel: http://localhost:${PORT}/admin.html`);

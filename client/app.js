@@ -136,6 +136,96 @@ function initSocket() {
     }
 }
 
+// ─── SEARCH ───────────────────────────────────────────────────────────
+function initSearch() {
+    const searchInput = $('global-search');
+    const searchWrap = document.querySelector('.search-bar-wrap');
+    
+    searchInput.addEventListener('input', debounce((e) => {
+        const query = e.target.value.trim();
+        if (query.length >= 2) {
+            searchAll(query);
+        } else if (query.length === 0) {
+            loadStreams();
+        }
+    }, 500));
+
+    const toggleSearch = () => {
+        searchWrap.classList.toggle('active');
+        if (searchWrap.classList.contains('active')) {
+            searchInput.focus();
+        } else {
+            searchInput.value = '';
+            if (currentScreen === 'home') loadStreams();
+        }
+    };
+
+    document.querySelector('.search-trigger').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSearch();
+    });
+
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+    document.addEventListener('click', (e) => {
+        if (searchWrap.classList.contains('active')) {
+            searchWrap.classList.remove('active');
+            searchInput.value = '';
+        }
+    });
+}
+
+async function searchAll(query) {
+    const feed = $('stream-feed');
+    feed.innerHTML = '<div class="feed-loading"><div class="spinner"></div><p>Searching...</p></div>';
+    try {
+        const [streams, users] = await Promise.all([
+            apiReq('GET', `/api/streams/search?q=${query}`),
+            apiReq('GET', `/api/users/search?q=${query}`)
+        ]);
+        renderSearchResults(streams, users);
+    } catch {
+        feed.innerHTML = '<div class="feed-loading"><p>Search failed.</p></div>';
+    }
+}
+
+function renderSearchResults(streams, users) {
+    const feed = $('stream-feed');
+    let html = '';
+    
+    if (streams.length) {
+        html += '<h3 style="grid-column: 1/-1; font-size: 1.1rem; margin: 10px 0;">Live Streams</h3>';
+        html += renderStreamFeedHTML(streams);
+    }
+    
+    if (users.length) {
+        html += '<h3 style="grid-column: 1/-1; font-size: 1.1rem; margin: 15px 0 10px;">Users</h3>';
+        html += users.map(u => {
+            const initials = u.username.charAt(0).toUpperCase();
+            return `
+                <div class="glass" style="display:flex; align-items:center; gap:12px; padding:10px; border-radius:12px; cursor:pointer;" onclick="viewUserProfile(${u.id})">
+                    <div class="user-avatar-sm" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border-radius:50%;">${initials}</div>
+                    <div style="font-weight:600;">${u.username}</div>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    if (!streams.length && !users.length) {
+        html = '<div class="feed-loading"><p>No results found.</p></div>';
+    }
+    
+    feed.innerHTML = html;
+}
+
+function debounce(fn, delay) {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), delay);
+    };
+}
+
 // ─── NAV ──────────────────────────────────────────────────────────────
 function navigateTo(screenName) {
     if (screenName === 'golive' && !currentUser) {
@@ -166,9 +256,11 @@ function navigateTo(screenName) {
     if (screenName === 'golive') initCamera();
     if (screenName === 'wallet') loadWallet();
     if (screenName === 'profile') renderProfile();
-    if (screenName === 'home') loadStreams();
     if (screenName === 'chat') renderChatList();
     if (screenName !== 'chat-thread') chatPartnerId = null;
+    if (screenName !== 'view-profile' && screenName !== 'follow-list') {
+        viewProfileUserId = null;
+    }
 }
 
 // ─── AUTH ──────────────────────────────────────────────────────────────
@@ -287,9 +379,9 @@ function renderTopBar() {
     const avatarEl = $('user-avatar-top');
     if (currentUser) {
         avatarEl.textContent = currentUser.username.charAt(0).toUpperCase();
-        avatarEl.style.display = 'flex';
+        avatarEl.style.backgroundImage = 'none';
     } else {
-        avatarEl.style.display = 'flex';
+        avatarEl.style.backgroundImage = 'none';
         avatarEl.textContent = '?';
     }
 }
@@ -299,7 +391,9 @@ async function loadStreams(cat) {
     const feed = $('stream-feed');
     feed.innerHTML = '<div class="feed-loading"><div class="spinner"></div><p>Loading streams...</p></div>';
     try {
-        const endpoint = currentUser ? '/api/streams/all' : '/api/streams';
+        let endpoint = currentUser ? '/api/streams/all' : '/api/streams';
+        if (cat === 'following') endpoint += '?category=following';
+        
         const streams = await apiReq('GET', endpoint);
         renderStreamFeed(streams, cat);
     } catch {
@@ -311,11 +405,15 @@ const STREAM_EMOJIS = { Gaming: '🎮', Music: '🎵', Talk: '💬', Dance: '�
 function renderStreamFeed(streams, cat) {
     const feed = $('stream-feed');
     let filtered = streams;
-    if (cat && cat !== 'all') {
+    if (cat && cat !== 'all' && cat !== 'following') {
         filtered = streams.filter(s => s.category?.toLowerCase() === cat.toLowerCase());
     }
     if (!filtered.length) {
-        // INJECT MOCK STREAMS IF NONE EXIST
+        if (cat === 'following') {
+            feed.innerHTML = '<div class="feed-loading"><span style="font-size:2.5rem">🤝</span><p>No one you follow is live. Explore some new hosts!</p></div>';
+            return;
+        }
+        
         filtered = [
             { id: "'mock1'", username: 'GamingGuru', category: 'Gaming', viewer_count: 1240, type: 'public', title: 'Late Night Valorant Ranked!' },
             { id: "'mock2'", username: 'MelodyMaker', category: 'Music', viewer_count: 850, type: 'public', title: 'Acoustic Covers & Chill' },
@@ -325,13 +423,15 @@ function renderStreamFeed(streams, cat) {
         if (cat && cat !== 'all') {
             filtered = filtered.filter(s => s.category?.toLowerCase() === cat.toLowerCase());
         }
-
-        if (!filtered.length) {
-            feed.innerHTML = '<div class="feed-loading"><span style="font-size:2.5rem">📡</span><p>No live streams right now</p></div>';
-            return;
-        }
     }
-    feed.innerHTML = filtered.map((s, i) => `
+    feed.innerHTML = renderStreamFeedHTML(filtered);
+}
+
+function renderStreamFeedHTML(streams) {
+    return streams.map((s, i) => {
+        const initials = s.username ? s.username.charAt(0).toUpperCase() : '?';
+
+        return `
     <div class="stream-card" style="animation-delay:${i * 0.07}s" onclick="openStream(${s.id})">
       <div class="stream-thumb">
         <span class="stream-thumb-emoji">${STREAM_EMOJIS[s.category] || '🌐'}</span>
@@ -344,14 +444,17 @@ function renderStreamFeed(streams, cat) {
           </div>` : ''}
       </div>
       <div class="stream-card-info">
-        <div class="stream-card-host">${s.username}</div>
+        <div style="display:flex; align-items:center; gap:8px">
+           <div class="user-avatar-lg thumb-avatar" style="width:20px;height:20px;font-size:0.6rem;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;border-radius:50%">${initials}</div>
+           <div class="stream-card-host">${s.username}</div>
+        </div>
         <div class="stream-card-meta">
           <span class="viewer-count">👁 ${s.viewer_count || 0}</span>
         </div>
         <div class="stream-card-cat">${s.category || 'General'}</div>
       </div>
     </div>
-  `).join('');
+  `; }).join('');
 }
 
 document.querySelectorAll('.cat-pill').forEach(pill => {
@@ -396,7 +499,8 @@ function enterLiveScreen(stream) {
     $('hud-title').textContent = stream.title || 'Live Stream';
     $('hud-viewers').textContent = stream.viewer_count || 0;
     $('hud-host-name').textContent = stream.username || 'Host';
-    $('hud-host-avatar').textContent = (stream.username || 'H').charAt(0).toUpperCase();
+    
+    setAvatar($('hud-host-avatar'), stream.avatar, stream.username || 'H');
 
     // Show/hide end stream button
     $('end-stream-btn').classList.toggle('hidden', !isHost);
@@ -434,6 +538,44 @@ function enterLiveScreen(stream) {
 
     // Load gifts
     loadGifts();
+
+    // Check follow status
+    updateFollowButton();
+}
+
+
+// ─── FOLLOW SYSTEM ────────────────────────────────────────────────────
+async function toggleFollow() {
+    if (!currentUser) { showAuthOverlay('login'); return; }
+    if (!currentStream || isHost) return;
+
+    const followBtn = $('hud-follow-btn');
+    const isFollowing = followBtn.classList.contains('following');
+    const method = isFollowing ? 'DELETE' : 'POST';
+
+    try {
+        await apiReq(method, `/api/users/follow/${currentStream.host_id}`);
+        updateFollowButton();
+    } catch (err) {
+        console.error("Follow error:", err);
+    }
+}
+
+async function updateFollowButton() {
+    if (!currentUser || !currentStream || isHost) {
+        $('hud-follow-btn').classList.add('hidden');
+        return;
+    }
+
+    try {
+        const { isFollowing } = await apiReq('GET', `/api/users/follow-status/${currentStream.host_id}`);
+        const btn = $('hud-follow-btn');
+        btn.classList.remove('hidden');
+        btn.classList.toggle('following', isFollowing);
+        btn.textContent = isFollowing ? 'Following' : '+ Follow';
+    } catch (e) {
+        $('hud-follow-btn').classList.add('hidden');
+    }
 }
 
 
@@ -951,23 +1093,145 @@ async function renderProfile() {
         guest.classList.add('hidden');
         user.classList.remove('hidden');
 
-        // Fetch fresh profile data
         try {
-            const freshProfile = await apiReq('GET', '/api/auth/me');
-            currentUser = freshProfile;
-            localStorage.setItem('tl_user', JSON.stringify(freshProfile));
+            // Fetch detailed profile data
+            const data = await apiReq('GET', `/api/users/profile/${currentUser.id}`);
+            
+            $('profile-username').textContent = data.username;
+            $('profile-email').textContent = currentUser.email; 
+            $('profile-followers').textContent = (data.followers_count || 0).toLocaleString();
+            $('profile-followers').parentElement.onclick = () => openFollowList('followers', data.id);
+            
+            $('profile-following').textContent = (data.following_count || 0).toLocaleString();
+            $('profile-following').parentElement.onclick = () => openFollowList('following', data.id);
+            $('profile-wallet').textContent = (data.coin_balance || 0).toLocaleString();
+            $('profile-earned').textContent = (data.earned_coins || 0).toLocaleString();
 
-            $('profile-username').textContent = currentUser.username;
-            $('profile-email').textContent = currentUser.email;
-            $('profile-coins').textContent = (currentUser.coin_balance || 0).toLocaleString();
-            $('profile-followers').textContent = (currentUser.followers || 0).toLocaleString();
-            $('profile-streams').textContent = (currentUser.total_streams || 0).toLocaleString();
-
-            const avatar = $('profile-avatar-el');
-            avatar.textContent = currentUser.username.charAt(0).toUpperCase();
+            setAvatar($('profile-avatar-el'), data.avatar, data.username);
         } catch (e) {
-            console.error("Failed to fetch fresh profile", e);
+            console.error("Profile fetch error", e);
         }
+    }
+}
+
+let viewProfileUserId = null;
+
+async function viewUserProfile(userId) {
+    if (currentUser && userId === currentUser.id) {
+        navigateTo('profile');
+        return;
+    }
+    
+    viewProfileUserId = userId;
+    navigateTo('view-profile');
+    
+    // Reset view
+    $('v-profile-username').textContent = 'Loading...';
+    $('v-profile-bio').textContent = '';
+    $('v-profile-followers').textContent = '0';
+    $('v-profile-following').textContent = '0';
+    $('v-profile-coins').textContent = '0';
+    $('v-follow-btn').classList.add('hidden');
+    
+    try {
+        const data = await apiReq('GET', `/api/users/profile/${userId}`);
+        
+        $('v-profile-username').textContent = data.username;
+        $('v-profile-bio').textContent = data.bio || 'No bio provided.';
+        $('v-profile-followers').textContent = (data.followers_count || 0).toLocaleString();
+        $('v-profile-followers').parentElement.onclick = () => openFollowList('followers', data.id);
+        
+        $('v-profile-following').textContent = (data.following_count || 0).toLocaleString();
+        $('v-profile-following').parentElement.onclick = () => openFollowList('following', data.id);
+        $('v-profile-coins').textContent = (data.earned_coins || 0).toLocaleString();
+        
+        setAvatar($('v-profile-avatar'), data.avatar, data.username);
+
+        // Setup message button
+        $('v-message-btn').onclick = () => openChatThread(data.id, data.username);
+
+        // Check follow status
+        if (currentUser) {
+            const { isFollowing } = await apiReq('GET', `/api/users/follow-status/${userId}`);
+            const btn = $('v-follow-btn');
+            btn.classList.remove('hidden');
+            btn.classList.toggle('following', isFollowing);
+            btn.textContent = isFollowing ? 'Following' : '+ Follow';
+        } else {
+            $('v-follow-btn').classList.remove('hidden');
+            $('v-follow-btn').textContent = '+ Follow';
+        }
+    } catch (e) {
+        console.error("View profile error", e);
+    }
+}
+
+async function toggleFollowProfile() {
+    if (!currentUser) { showAuthOverlay('login'); return; }
+    if (!viewProfileUserId) return;
+
+    const btn = $('v-follow-btn');
+    const isFollowing = btn.classList.contains('following');
+    const method = isFollowing ? 'DELETE' : 'POST';
+
+    try {
+        await apiReq(method, `/api/users/follow/${viewProfileUserId}`);
+        // Refresh view
+        viewUserProfile(viewProfileUserId);
+    } catch (err) {
+        console.error("Follow error:", err);
+    }
+}
+
+// ─── FOLLOW LIST ────────────────────────────────────────────────────────
+let followListType = 'followers';
+let followListUserId = null;
+
+async function openFollowList(type, userId) {
+    followListType = type;
+    followListUserId = userId;
+    navigateTo('follow-list');
+
+    $('follow-list-title').textContent = type === 'followers' ? 'Followers' : 'Following';
+    $('follow-list-content').innerHTML = '<div class="feed-loading">📡 Loading...</div>';
+
+    try {
+        const users = await apiReq('GET', `/api/users/${userId}/${type}`);
+        renderFollowList(users);
+    } catch (e) {
+        $('follow-list-content').innerHTML = '<div class="feed-loading"><p>Failed to load.</p></div>';
+    }
+}
+
+function renderFollowList(users) {
+    const container = $('follow-list-content');
+    if (!users.length) {
+        container.innerHTML = `<div class="feed-loading"><p>No ${followListType} yet.</p></div>`;
+        return;
+    }
+
+    container.innerHTML = users.map(u => {
+        const initials = u.username.charAt(0).toUpperCase();
+
+        return `
+            <div class="glass" style="display:flex; align-items:center; gap:12px; padding:15px; border-radius:16px; cursor:pointer; margin-bottom:10px;" onclick="viewUserProfile(${u.id})">
+                <div class="user-avatar-sm" style="width:48px; height:48px; border:2px solid var(--glass-border); background: linear-gradient(135deg, var(--accent), var(--accent2));">${initials}</div>
+                <div style="flex:1">
+                    <div style="font-weight:700; font-size:1.05rem">${u.username}</div>
+                    <div style="font-size:0.85rem; color:rgba(255,255,255,0.6)">View Profile</div>
+                </div>
+                <div style="color:var(--accent); font-size:1.2rem">→</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function goBackFromFollowList() {
+    if (viewProfileUserId) {
+        navigateTo('view-profile');
+        viewUserProfile(viewProfileUserId);
+    } else {
+        navigateTo('profile');
     }
 }
 
@@ -1003,10 +1267,21 @@ async function respondToJoinRequest(approved) {
 // ─── MODAL HELPERS ─────────────────────────────────────────────────────
 function closeModal(id) { $(id)?.classList.add('hidden'); }
 
+// ─── HELPERS ───────────────────────────────────────────────────────────
+function setAvatar(el, avatarUrl, username) {
+    if (!el) return;
+    el.style.backgroundImage = ''; 
+    el.textContent = username ? username.charAt(0).toUpperCase() : '?';
+    el.classList.remove('has-img');
+}
+
+function closeModal(id) { $(id)?.classList.add('hidden'); }
+
 // ─── INIT ──────────────────────────────────────────────────────────────
 (function init() {
     renderTopBar();
     initSocket();
+    initSearch();
     loadStreams();
 
     // If no user, show auth on first load after brief delay
