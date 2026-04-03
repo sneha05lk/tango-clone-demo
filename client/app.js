@@ -502,8 +502,18 @@ function enterLiveScreen(stream) {
     
     setAvatar($('hud-host-avatar'), stream.avatar, stream.username || 'H');
 
-    // Show/hide end stream button
+    // Show/hide end stream button & host controls
     $('end-stream-btn').classList.toggle('hidden', !isHost);
+    $('host-controls').classList.toggle('hidden', !isHost);
+
+    // Initial state for host toggles
+    if (isHost) {
+        $('hud-mic-btn').classList.remove('muted');
+        $('hud-cam-btn').classList.remove('muted');
+        $('hud-mic-btn').textContent = '🎤';
+        $('hud-cam-btn').textContent = '📷';
+        $('video-placeholder').classList.add('hidden');
+    }
 
     // Clear chat
     $('chat-messages').innerHTML = '';
@@ -598,6 +608,8 @@ async function connectToLiveKit(token, roomName) {
         .on(LivekitClient.RoomEvent.TrackSubscribed, handleTrackSubscribed)
         .on(LivekitClient.RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed)
         .on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, handleAudioPlaybackStatus)
+        .on(LivekitClient.RoomEvent.TrackMuted, (pub, part) => handleTrackMuteChange(pub, part, true))
+        .on(LivekitClient.RoomEvent.TrackUnmuted, (pub, part) => handleTrackMuteChange(pub, part, false))
         .on(LivekitClient.RoomEvent.Disconnected, () => {
             console.log('Disconnected from LiveKit');
         });
@@ -649,11 +661,14 @@ async function connectToLiveKit(token, roomName) {
 function handleTrackSubscribed(track, publication, participant) {
     console.log('Track subscribed:', track.kind, participant.identity);
     if (track.kind === 'video') {
-        const remoteVideo = $('remote-video');
-        remoteVideo.classList.remove('hidden');
-        track.attach(remoteVideo);
+        const videoEl = $('remote-video');
+        track.attach(videoEl);
+        // If track is already muted when subscribed
+        if (publication.isMuted) {
+            handleTrackMuteChange(publication, participant, true);
+        }
         // Explicitly play to bypass some browser hesitation
-        remoteVideo.play().catch(e => console.warn('Autoplay prevented video:', e));
+        videoEl.play().catch(e => console.warn('Autoplay prevented video:', e));
     } else if (track.kind === 'audio') {
         const audioId = `audio-track-${participant.identity}`;
         let existing = $(audioId);
@@ -1261,6 +1276,55 @@ function goBackFromFollowList() {
     } else {
         navigateTo('profile');
     }
+}
+
+function handleTrackMuteChange(pub, part, isMuted) {
+    if (pub.kind !== 'video') return;
+    
+    const placeholder = $('video-placeholder');
+    const avatar = $('placeholder-avatar-el');
+    const remoteVideo = $('remote-video');
+    const localVideo = $('local-video');
+
+    if (isMuted) {
+        placeholder.classList.remove('hidden');
+        avatar.textContent = part.identity ? part.identity.charAt(0).toUpperCase() : '?';
+        if (part.isLocal) {
+            localVideo.classList.add('hidden');
+        } else {
+            remoteVideo.classList.add('hidden');
+        }
+    } else {
+        placeholder.classList.add('hidden');
+        if (part.isLocal) {
+            localVideo.classList.remove('hidden');
+        } else {
+            remoteVideo.classList.remove('hidden');
+        }
+    }
+}
+
+// ─── HOST CONTROLS ────────────────────────────────────────────────────
+function toggleMic() {
+    if (!livekitRoom || !isHost) return;
+    const enabled = livekitRoom.localParticipant.isMicrophoneEnabled;
+    livekitRoom.localParticipant.setMicrophoneEnabled(!enabled);
+    
+    const btn = $('hud-mic-btn');
+    btn.classList.toggle('muted', enabled);
+    btn.textContent = enabled ? '🔇' : '🎤';
+}
+
+function toggleCam() {
+    if (!livekitRoom || !isHost) return;
+    const enabled = livekitRoom.localParticipant.isCameraEnabled;
+    livekitRoom.localParticipant.setCameraEnabled(!enabled);
+    
+    const btn = $('hud-cam-btn');
+    btn.classList.toggle('muted', enabled);
+    btn.textContent = enabled ? '🚫' : '📷';
+    
+    // UI update handled by TrackMuted listener
 }
 
 // ─── PRIVATE/GROUP JOIN REQUEST ────────────────────────────────────────

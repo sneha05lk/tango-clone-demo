@@ -159,6 +159,10 @@
           <div id="video-area" class="video-area">
             <video id="remote-video" autoplay playsinline class="live-video"></video>
             <video id="local-video" autoplay muted playsinline class="live-video hidden"></video>
+            <div id="video-placeholder" class="video-placeholder hidden">
+              <div class="placeholder-avatar" id="placeholder-avatar-el"></div>
+              <p>Camera is Off</p>
+            </div>
             <div id="reaction-overlay" class="reaction-overlay"></div>
           </div>
 
@@ -172,6 +176,13 @@
                 <span class="viewer-count">👁 <span id="hud-viewers">0</span></span>
               </div>
             </div>
+
+            <!-- New: Host Controls -->
+            <div id="host-controls" class="host-controls hidden">
+              <button id="hud-mic-btn" class="hud-ctrl-btn" onclick="toggleMic()" title="Mute/Unmute Mic">🎤</button>
+              <button id="hud-cam-btn" class="hud-ctrl-btn" onclick="toggleCam()" title="Enable/Disable Camera">📷</button>
+            </div>
+
             <div class="hud-host">
               <div class="host-avatar" id="hud-host-avatar"></div>
               <div class="host-meta-wrap">
