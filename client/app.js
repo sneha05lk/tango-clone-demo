@@ -1099,6 +1099,7 @@ async function renderProfile() {
             
             $('profile-username').textContent = data.username;
             $('profile-email').textContent = currentUser.email; 
+            $('profile-bio').textContent = data.bio || '';
             $('profile-followers').textContent = (data.followers_count || 0).toLocaleString();
             $('profile-followers').parentElement.onclick = () => openFollowList('followers', data.id);
             
@@ -1111,6 +1112,33 @@ async function renderProfile() {
         } catch (e) {
             console.error("Profile fetch error", e);
         }
+    }
+}
+
+// ─── PROFILE EDITOR ───────────────────────────────────────────────────
+function openProfileEditor() {
+    if (!currentUser) return;
+    $('edit-username').value = currentUser.username || '';
+    $('edit-bio').value = currentUser.bio || '';
+    $('profile-modal').classList.remove('hidden');
+}
+
+async function saveProfile() {
+    const username = $('edit-username').value.trim();
+    const bio = $('edit-bio').value.trim();
+    try {
+        await apiReq('PUT', '/api/users/profile', { username, bio });
+        
+        // Update local object
+        currentUser.username = username;
+        currentUser.bio = bio;
+        localStorage.setItem('tl_user', JSON.stringify(currentUser));
+        
+        closeModal('profile-modal');
+        renderProfile();
+        renderTopBar();
+    } catch (err) {
+        alert("Failed to save: " + err.message);
     }
 }
 

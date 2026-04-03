@@ -19,14 +19,23 @@ const getProfile = (req, res) => {
 
 // PUT /api/users/profile
 const updateProfile = (req, res) => {
-    const { avatar, bio } = req.body;
+    const { username, bio } = req.body;
     const userId = req.user.id;
 
+    if (!username || username.trim().length < 3) {
+        return res.status(400).json({ message: 'Username must be at least 3 characters' });
+    }
+
     db.run(
-        'UPDATE users SET avatar = ?, bio = ? WHERE id = ?',
-        [avatar, bio, userId],
+        'UPDATE users SET username = ?, bio = ? WHERE id = ?',
+        [username.trim(), bio, userId],
         function (err) {
-            if (err) return res.status(500).json({ message: err.message });
+            if (err) {
+                if (err.message.includes('UNIQUE constraint failed: users.username')) {
+                    return res.status(400).json({ message: 'Username already taken' });
+                }
+                return res.status(500).json({ message: err.message });
+            }
             res.json({ message: 'Profile updated successfully' });
         }
     );
