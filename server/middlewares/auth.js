@@ -10,8 +10,9 @@ const protect = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolive_secret_key');
-        db.get('SELECT id, username, email, coin_balance, role, avatar FROM users WHERE id = ?', [decoded.id], (err, user) => {
+        db.get('SELECT id, username, email, coin_balance, role, avatar, is_banned FROM users WHERE id = ?', [decoded.id], (err, user) => {
             if (err || !user) return res.status(401).json({ message: 'Not authorized, user not found' });
+            if (user.is_banned) return res.status(403).json({ message: 'Your account has been banned.' });
             req.user = user;
             next();
         });

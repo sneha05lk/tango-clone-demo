@@ -33,6 +33,7 @@ const initDB = () => {
       role TEXT DEFAULT 'user',
       avatar TEXT DEFAULT '',
       bio TEXT DEFAULT '',
+      is_banned INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -119,14 +120,16 @@ const initDB = () => {
       FOREIGN KEY(following_id) REFERENCES users(id)
     )`);
 
-    // Check if 'bio' column exists, add if not
+    // Check if 'is_banned' column exists, add if not
     db.all("PRAGMA table_info(users)", (err, columns) => {
       if (!err) {
         const hasBio = columns.some(col => col.name === 'bio');
         if (!hasBio) {
-          db.run("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''", (err) => {
-            if (!err) console.log('Fixed users table: Added bio column.');
-          });
+          db.run("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''");
+        }
+        const hasBanned = columns.some(col => col.name === 'is_banned');
+        if (!hasBanned) {
+          db.run("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0");
         }
       }
     });

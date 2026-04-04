@@ -84,4 +84,34 @@ const getRevenueChart = (req, res) => {
     );
 };
 
-module.exports = { getStats, getUsers, getStreams, getWithdrawals, updateWithdrawal, getRevenueChart };
+const terminateStream = (req, res) => {
+    const { id } = req.params;
+    const io = req.app.get('io');
+
+    db.get('SELECT livekit_room, title FROM streams WHERE id = ?', [id], (err, stream) => {
+        if (err || !stream) return res.status(404).json({ message: 'Stream not found' });
+
+        db.run('UPDATE streams SET is_live = 0 WHERE id = ?', [id], function (err) {
+            if (err) return res.status(500).json({ message: err.message });
+            
+            if (io && stream.livekit_room) {
+                io.to(stream.livekit_room).emit('stream-ended', { 
+                    message: 'This stream has been terminated by an administrator for policy violations.' 
+                });
+            }
+            res.json({ message: 'Stream terminated successfully' });
+        });
+    });
+};
+
+const toggleUserBan = (req, res) => {
+    const { id } = req.params;
+    const { is_banned } = req.body; // 1 for banned, 0 for active
+
+    db.run('UPDATE users SET is_banned = ? WHERE id = ?', [is_banned, id], function (err) {
+        if (err) return res.status(500).json({ message: err.message });
+        res.json({ message: `User ${is_banned ? 'banned' : 'unbanned'} successfully` });
+    });
+};
+
+module.exports = { getStats, getUsers, getStreams, getWithdrawals, updateWithdrawal, getRevenueChart, terminateStream, toggleUserBan };

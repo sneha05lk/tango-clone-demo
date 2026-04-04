@@ -12,9 +12,11 @@ module.exports = (io) => {
         if (token) {
             try {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolive_secret_key');
-                db.get('SELECT id, username, avatar, coin_balance FROM users WHERE id = ?', [decoded.id], (err, user) => {
+                db.get('SELECT id, username, avatar, coin_balance, is_banned FROM users WHERE id = ?', [decoded.id], (err, user) => {
                     if (err || !user) {
                         socket.user = null;
+                    } else if (user.is_banned) {
+                        return next(new Error('Your account has been banned.'));
                     } else {
                         socket.user = user;
                     }

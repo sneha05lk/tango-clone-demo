@@ -27,10 +27,11 @@ const io = new Server(server, {
     },
 });
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  // Middleware
+  app.use(cors());
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  app.set('io', io);
 
 // Serve client static files
 app.use(express.static(path.join(__dirname, '..', 'client')));

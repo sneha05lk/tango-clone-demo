@@ -425,6 +425,15 @@
       <p>Update your details to stand out!</p>
       
       <div class="input-group">
+        <label>Profile Picture</label>
+        <div class="avatar-edit-wrap" onclick="$('avatar-input').click()">
+          <div class="profile-avatar-lg" id="edit-avatar-preview"></div>
+          <div class="avatar-edit-overlay">📸</div>
+        </div>
+        <input type="file" id="avatar-input" accept="image/*" class="hidden" onchange="previewAvatar(this)" />
+      </div>
+
+      <div class="input-group">
         <label for="edit-username">Username</label>
         <input type="text" id="edit-username" placeholder="Enter new username" />
       </div>

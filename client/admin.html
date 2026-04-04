@@ -685,13 +685,20 @@
                 const users = await api('GET', '/api/admin/users');
                 document.getElementById('users-table-wrap').innerHTML = `
         <table>
-          <thead><tr><th>#</th><th>Username</th><th>Email</th><th>Coins</th><th>Role</th><th>Joined</th></tr></thead>
+          <thead><tr><th>#</th><th>Username</th><th>Email</th><th>Coins</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead>
           <tbody>${users.map(u => `
             <tr>
               <td>${u.id}</td><td><strong>${u.username}</strong></td><td>${u.email}</td>
               <td>🪙 ${u.coin_balance?.toLocaleString()}</td>
-              <td><span class="badge badge-${u.role === 'admin' ? 'admin' : 'approved'}">${u.role}</span></td>
+              <td><span class="badge badge-${u.role === 'admin' ? 'admin' : (u.is_banned ? 'rejected' : 'approved')}">${u.is_banned ? 'Banned' : u.role}</span></td>
               <td>${new Date(u.created_at).toLocaleDateString()}</td>
+              <td>
+                ${u.role !== 'admin' ? `
+                  <button class="btn btn-${u.is_banned ? 'success' : 'danger'}" onclick="handleToggleBan(${u.id}, ${u.is_banned ? 0 : 1})">
+                    ${u.is_banned ? 'Unban' : 'Ban'}
+                  </button>
+                ` : '—'}
+              </td>
             </tr>`).join('')}
           </tbody>
         </table>`;
@@ -704,7 +711,7 @@
                 const streams = await api('GET', '/api/admin/streams');
                 document.getElementById('streams-table-wrap').innerHTML = `
         <table>
-          <thead><tr><th>#</th><th>Title</th><th>Host</th><th>Category</th><th>Type</th><th>Status</th><th>Viewers</th></tr></thead>
+          <thead><tr><th>#</th><th>Title</th><th>Host</th><th>Category</th><th>Type</th><th>Status</th><th>Viewers</th><th>Actions</th></tr></thead>
           <tbody>${streams.map(s => `
             <tr>
               <td>${s.id}</td><td><strong>${s.title}</strong></td><td>${s.username}</td>
@@ -712,6 +719,9 @@
               <td><span class="badge badge-${s.type}">${s.type}</span></td>
               <td><span class="badge ${s.is_live ? 'badge-live' : 'badge-offline'}">${s.is_live ? '🔴 LIVE' : 'Offline'}</span></td>
               <td>👁 ${s.viewer_count}</td>
+              <td>
+                ${s.is_live ? `<button class="btn btn-danger" onclick="handleTerminateStream(${s.id})">End Stream</button>` : '—'}
+              </td>
             </tr>`).join('')}
           </tbody>
         </table>`;
@@ -749,6 +759,25 @@
                 const row = document.getElementById(`wr-${id}`);
                 row.querySelector('td:nth-child(4)').innerHTML = `<span class="badge badge-${status}">${status}</span>`;
                 row.querySelector('td:last-child').innerHTML = '—';
+            } catch (e) { alert(e.message); }
+        }
+
+        async function handleTerminateStream(id) {
+            if (!confirm('Are you sure you want to terminate this live stream?')) return;
+            try {
+                await api('PUT', `/api/admin/streams/${id}/terminate`);
+                alert('Stream terminated successfully.');
+                loadStreams();
+            } catch (e) { alert(e.message); }
+        }
+
+        async function handleToggleBan(id, isBanned) {
+            const action = isBanned ? 'ban' : 'unban';
+            if (!confirm(`Are you sure you want to ${action} this user?`)) return;
+            try {
+                await api('PUT', `/api/admin/users/${id}/ban`, { is_banned: isBanned });
+                alert(`User ${action}ned successfully.`);
+                loadUsers();
             } catch (e) { alert(e.message); }
         }
 

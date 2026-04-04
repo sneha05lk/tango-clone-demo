@@ -137,6 +137,24 @@ const getFollowing = (req, res) => {
     );
 };
 
+// POST /api/users/profile/avatar
+const updateAvatar = (req, res) => {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    
+    // Path relative to 'client' folder for frontend access
+    const avatarPath = '/uploads/' + req.file.filename;
+    const userId = req.user.id;
+
+    db.run(
+        'UPDATE users SET avatar = ? WHERE id = ?',
+        [avatarPath, userId],
+        function (err) {
+            if (err) return res.status(500).json({ message: err.message });
+            res.json({ message: 'Avatar updated successfully', avatar: avatarPath });
+        }
+    );
+};
+
 module.exports = {
     getProfile,
     updateProfile,
@@ -145,5 +163,6 @@ module.exports = {
     getFollowStatus,
     searchUsers,
     getFollowers,
-    getFollowing
+    getFollowing,
+    updateAvatar
 };

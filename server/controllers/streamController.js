@@ -3,7 +3,7 @@ const { db } = require('../config/db');
 // GET /api/streams - list all live public streams
 const getStreams = (req, res) => {
     db.all(
-        `SELECT s.*, u.username, u.avatar FROM streams s
+        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
      JOIN users u ON s.host_id = u.id
      WHERE s.is_live = 1 AND s.type = 'public'
      ORDER BY s.viewer_count DESC`,
@@ -21,7 +21,7 @@ const getAllStreams = (req, res) => {
 
     if (category === 'following' && req.user) {
         db.all(
-            `SELECT s.*, u.username, u.avatar FROM streams s
+            `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
              JOIN users u ON s.host_id = u.id
              JOIN followers f ON f.following_id = s.host_id
              WHERE s.is_live = 1 AND f.follower_id = ?
@@ -34,7 +34,7 @@ const getAllStreams = (req, res) => {
         );
     } else {
         db.all(
-            `SELECT s.*, u.username, u.avatar FROM streams s
+            `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
              JOIN users u ON s.host_id = u.id
              WHERE s.is_live = 1
              ORDER BY s.viewer_count DESC`,
@@ -53,7 +53,7 @@ const searchStreams = (req, res) => {
     if (!query) return res.json([]);
 
     db.all(
-        `SELECT s.*, u.username, u.avatar FROM streams s
+        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
          JOIN users u ON s.host_id = u.id
          WHERE s.is_live = 1 AND (s.title LIKE ? OR u.username LIKE ?)
          ORDER BY s.viewer_count DESC`,
@@ -68,7 +68,7 @@ const searchStreams = (req, res) => {
 // GET /api/streams/:id
 const getStreamById = (req, res) => {
     db.get(
-        `SELECT s.*, u.username, u.avatar FROM streams s
+        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
      JOIN users u ON s.host_id = u.id
      WHERE s.id = ?`,
         [req.params.id],

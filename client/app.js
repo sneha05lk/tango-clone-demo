@@ -90,7 +90,7 @@ function initSocket() {
     });
 
     socket.on('chat-message', (msg) => {
-        appendChat(msg.username, msg.message);
+        appendChat(msg.username, msg.message, false, msg.avatar);
     });
 
     socket.on('direct-message', data => {
@@ -202,9 +202,10 @@ function renderSearchResults(streams, users) {
         html += '<h3 style="grid-column: 1/-1; font-size: 1.1rem; margin: 15px 0 10px;">Users</h3>';
         html += users.map(u => {
             const initials = u.username.charAt(0).toUpperCase();
+            const avatarStyle = u.avatar ? `background-image:url(${u.avatar});background-size:cover;background-position:center;` : '';
             return `
                 <div class="glass" style="display:flex; align-items:center; gap:12px; padding:10px; border-radius:12px; cursor:pointer;" onclick="viewUserProfile(${u.id})">
-                    <div class="user-avatar-sm" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border-radius:50%;">${initials}</div>
+                    <div class="user-avatar-sm" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border-radius:50%; ${avatarStyle}">${u.avatar ? '' : initials}</div>
                     <div style="font-weight:600;">${u.username}</div>
                 </div>
             `;
@@ -378,11 +379,9 @@ function clearGuestTimer() {
 function renderTopBar() {
     const avatarEl = $('user-avatar-top');
     if (currentUser) {
-        avatarEl.textContent = currentUser.username.charAt(0).toUpperCase();
-        avatarEl.style.backgroundImage = 'none';
+        setAvatar(avatarEl, currentUser.avatar, currentUser.username);
     } else {
-        avatarEl.style.backgroundImage = 'none';
-        avatarEl.textContent = '?';
+        setAvatar(avatarEl, null, null);
     }
 }
 
@@ -437,6 +436,7 @@ function renderStreamFeedHTML(streams) {
         <span class="stream-thumb-emoji">${STREAM_EMOJIS[s.category] || '🌐'}</span>
         <span style="position:absolute;top:8px;left:8px;z-index:2">
           <span class="live-badge">LIVE</span>
+          ${s.is_trending ? '<span class="trending-badge">🔥 TRENDING</span>' : ''}
         </span>
         ${s.type && s.type.toLowerCase() !== 'public' ? `
           <div style="position:absolute;top:8px;right:8px;z-index:3;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);padding:4px 6px;border-radius:8px;border:1px solid var(--glass-border);display:flex;align-items:center;gap:4px">
@@ -445,7 +445,7 @@ function renderStreamFeedHTML(streams) {
       </div>
       <div class="stream-card-info">
         <div style="display:flex; align-items:center; gap:8px">
-           <div class="user-avatar-lg thumb-avatar" style="width:20px;height:20px;font-size:0.6rem;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;border-radius:50%">${initials}</div>
+           <div class="thumb-avatar" style="width:20px;height:20px;font-size:0.6rem;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;border-radius:50%;background-size:cover;background-position:center;${s.avatar ? `background-image:url(${s.avatar})` : ''}">${s.avatar ? '' : initials}</div>
            <div class="stream-card-host">${s.username}</div>
         </div>
         <div class="stream-card-meta">
@@ -842,11 +842,19 @@ function sendChatMessage(context) {
     socket?.emit('chat-message', { roomName: currentStream.livekit_room, message: msg });
     input.value = '';
 }
-function appendChat(username, message, isSystem = false) {
+function appendChat(username, message, isSystem = false, avatar = '') {
     const box = $('chat-messages');
     const div = document.createElement('div');
-    div.className = 'chat-msg';
-    div.innerHTML = `<span class="chat-msg-name" style="${isSystem ? 'color:var(--accent2)' : ''}">${username}:</span><span class="chat-msg-text">${message}</span>`;
+    div.className = `chat-msg ${isSystem ? 'system-msg' : ''}`;
+    
+    if (isSystem) {
+        div.innerHTML = `<span class="chat-msg-text" style="color:var(--accent2); font-weight:600">${message}</span>`;
+    } else {
+        const initials = username ? username.charAt(0).toUpperCase() : '?';
+        const avatarHtml = `<div class="chat-avatar" style="${avatar ? `background-image:url(${avatar});background-size:cover;background-position:center;` : `background:var(--accent)`}">${avatar ? '' : initials}</div>`;
+        div.innerHTML = `${avatarHtml}<div class="chat-msg-content"><span class="chat-msg-name">${username}</span><span class="chat-msg-text">${message}</span></div>`;
+    }
+    
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
 }
@@ -1017,9 +1025,12 @@ async function renderChatList() {
             list.innerHTML = '<div class="empty-state"><span class="empty-icon">💬</span><p>No messages yet</p></div>';
             return;
         }
-        list.innerHTML = convos.map(c => `
-      <div class="chat-list-item glass" onclick="openChatThread(${c.partner_id}, '${c.partner_name}')" style="display:flex;align-items:center;padding:12px;border-radius:12px;gap:12px;cursor:pointer">
-         <div class="profile-avatar-lg" style="width:48px;height:48px;font-size:1.2rem;background:linear-gradient(135deg,#c084fc,#818cf8)">${c.partner_name.charAt(0).toUpperCase()}</div>
+        list.innerHTML = convos.map(c => {
+            const initials = c.partner_name ? c.partner_name.charAt(0).toUpperCase() : '?';
+            const avatarStyle = c.partner_avatar ? `background-image:url(${c.partner_avatar}); background-size:cover; background-position:center;` : '';
+            return `
+      <div class="chat-list-item glass" onclick="openChatThread(${c.partner_id}, '${c.partner_name}', '${c.partner_avatar || ''}')" style="display:flex;align-items:center;padding:12px;border-radius:12px;gap:12px;cursor:pointer">
+         <div class="profile-avatar-lg" style="width:48px;height:48px;font-size:1.2rem;background:linear-gradient(135deg,#c084fc,#818cf8);${avatarStyle}">${c.partner_avatar ? '' : initials}</div>
          <div style="flex:1">
            <div style="font-weight:600;margin-bottom:4px;color:var(--text)">${c.partner_name}</div>
            <div style="color:var(--text);opacity:0.7;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">${c.last_message}</div>
@@ -1027,16 +1038,16 @@ async function renderChatList() {
          <div style="font-size:0.75rem;color:var(--text);opacity:0.5">${formatTime(c.time)}</div>
          ${!c.is_read && c.partner_id !== currentUser.id ? '<div style="width:8px;height:8px;background:var(--accent);border-radius:50%"></div>' : ''}
       </div>
-    `).join('');
+    `; }).join('');
     } catch (err) {
         console.error(err);
     }
 }
 
-async function openChatThread(partnerId, partnerName) {
+async function openChatThread(partnerId, partnerName, partnerAvatar = '') {
     chatPartnerId = partnerId;
     $('chat-thread-partner-name').textContent = partnerName;
-    $('chat-thread-partner-avatar').textContent = partnerName.charAt(0).toUpperCase();
+    setAvatar($('chat-thread-partner-avatar'), partnerAvatar, partnerName);
     $('chat-thread-messages').innerHTML = '<div class="feed-loading">📡 Loading messages...</div>';
     navigateTo('chat-thread');
 
@@ -1130,20 +1141,55 @@ async function renderProfile() {
     }
 }
 
-// ─── PROFILE EDITOR ───────────────────────────────────────────────────
 function openProfileEditor() {
     if (!currentUser) return;
     $('edit-username').value = currentUser.username || '';
     $('edit-bio').value = currentUser.bio || '';
     $('profile-modal').classList.remove('hidden');
+    setAvatar($('edit-avatar-preview'), currentUser.avatar, currentUser.username);
+}
+
+function previewAvatar(input) {
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const preview = $('edit-avatar-preview');
+            preview.style.backgroundImage = `url(${e.target.result})`;
+            preview.textContent = '';
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
 }
 
 async function saveProfile() {
     const username = $('edit-username').value.trim();
     const bio = $('edit-bio').value.trim();
+    const avatarFile = $('avatar-input').files[0];
+
     try {
+        // 1. Update basic info
         await apiReq('PUT', '/api/users/profile', { username, bio });
         
+        // 2. Update avatar if a new one was selected
+        if (avatarFile) {
+            const formData = new FormData();
+            formData.append('avatar', avatarFile);
+            
+            const res = await fetch('/api/users/profile/avatar', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.message);
+            currentUser.avatar = data.avatar;
+
+            // If user is currently hosting, update HUD avatar
+            if (isHost) {
+                setAvatar($('hud-host-avatar'), currentUser.avatar, currentUser.username);
+            }
+        }
+
         // Update local object
         currentUser.username = username;
         currentUser.bio = bio;
@@ -1255,10 +1301,11 @@ function renderFollowList(users) {
 
     container.innerHTML = users.map(u => {
         const initials = u.username.charAt(0).toUpperCase();
+        const avatarStyle = u.avatar ? `background-image:url(${u.avatar}); background-size:cover; background-position:center;` : '';
 
         return `
             <div class="glass" style="display:flex; align-items:center; gap:12px; padding:15px; border-radius:16px; cursor:pointer; margin-bottom:10px;" onclick="viewUserProfile(${u.id})">
-                <div class="user-avatar-sm" style="width:48px; height:48px; border:2px solid var(--glass-border); background: linear-gradient(135deg, var(--accent), var(--accent2));">${initials}</div>
+                <div class="user-avatar-sm" style="width:48px; height:48px; border:2px solid var(--glass-border); background: linear-gradient(135deg, var(--accent), var(--accent2)); ${avatarStyle}">${u.avatar ? '' : initials}</div>
                 <div style="flex:1">
                     <div style="font-weight:700; font-size:1.05rem">${u.username}</div>
                     <div style="font-size:0.85rem; color:rgba(255,255,255,0.6)">View Profile</div>
@@ -1362,9 +1409,17 @@ function closeModal(id) { $(id)?.classList.add('hidden'); }
 // ─── HELPERS ───────────────────────────────────────────────────────────
 function setAvatar(el, avatarUrl, username) {
     if (!el) return;
-    el.style.backgroundImage = ''; 
-    el.textContent = username ? username.charAt(0).toUpperCase() : '?';
-    el.classList.remove('has-img');
+    if (avatarUrl) {
+        el.style.backgroundImage = `url(${avatarUrl})`;
+        el.textContent = '';
+        el.classList.add('has-img');
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+    } else {
+        el.style.backgroundImage = 'none';
+        el.textContent = username ? username.charAt(0).toUpperCase() : '?';
+        el.classList.remove('has-img');
+    }
 }
 
 function closeModal(id) { $(id)?.classList.add('hidden'); }
