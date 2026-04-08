@@ -314,8 +314,8 @@ function hideAuthOverlay() {
     if (!currentUser) startGuestTimer();
 }
 function showAuthForm(form) {
-    $('login-pane').classList.toggle('hidden', form !== 'login');
-    $('register-pane').classList.toggle('hidden', form !== 'register');
+    $('login-form').classList.toggle('hidden', form !== 'login');
+    $('register-form').classList.toggle('hidden', form !== 'register');
 }
 
 $('login-form').addEventListener('submit', async (e) => {
