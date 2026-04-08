@@ -1,0 +1,24 @@
+Token generated successfully.
+Token (start): eyJhbGciOiJIUzI1NiJ9...
+Decoded Payload:
+{
+  "name": "Test Artist",
+  "video": {
+    "room": "test_room",
+    "roomJoin": true,
+    "canPublish": true,
+    "canSubscribe": true
+  },
+  "iss": "APIVhmM7xoXLoqB",
+  "exp": 1775647723,
+  "nbf": 0,
+  "sub": "test_user"
+}
+
+Verifying signature locally with the secret...
+??? Signature valid locally!
+
+Comparing Key in Token to Key in .env:
+API Key from .env: APIVhmM7xoXLoqB
+API Key from Token (iss): APIVhmM7xoXLoqB
+??? API Keys match.

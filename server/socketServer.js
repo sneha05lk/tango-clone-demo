@@ -145,6 +145,48 @@ module.exports = (io) => {
             }
         });
 
+        // ── GUEST / CO-STREAMING FLOW ─────────────────────────────────────
+        socket.on('guest-invite', ({ userId, roomName }) => {
+            if (!socket.user) return;
+            const targetSocket = onlineUsers[userId];
+            if (targetSocket) {
+                io.to(targetSocket).emit('guest-invite-received', {
+                    hostId: socket.user.id,
+                    hostName: socket.user.username,
+                    roomName
+                });
+            }
+        });
+
+        socket.on('guest-invite-response', ({ hostId, accepted, roomName }) => {
+            if (!socket.user) return;
+            const targetSocket = onlineUsers[hostId];
+            if (targetSocket) {
+                io.to(targetSocket).emit('guest-invite-reply', {
+                    userId: socket.user.id,
+                    username: socket.user.username,
+                    accepted,
+                    roomName
+                });
+            }
+        });
+
+        socket.on('end-guest-session', ({ roomName }) => {
+            if (!socket.user) return;
+            // Notify the room that a guest left
+            io.to(roomName).emit('guest-left', { userId: socket.user.id });
+        });
+
+        socket.on('kick-guest', ({ userId, roomName }) => {
+            if (!socket.user) return;
+            const targetSocket = onlineUsers[userId];
+            if (targetSocket) {
+                io.to(targetSocket).emit('guest-kicked', { roomName });
+            }
+            // Also notify the room to remove the video
+            io.to(roomName).emit('guest-left', { userId });
+        });
+
 
         // ── DISCONNECT ────────────────────────────────────────────────────
         socket.on('disconnecting', () => {

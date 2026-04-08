@@ -588,6 +588,8 @@
 
     <script>
         let adminToken = localStorage.getItem('tl_admin_token');
+        let revenueChart = null;
+        let typeChart = null;
 
         async function api(method, path, body) {
             const r = await fetch(path, {
@@ -600,7 +602,7 @@
         }
 
         async function adminLogin() {
-            const email = document.getElementById('a-email').value;
+            const email = document.getElementById('a-email').value.trim().toLowerCase();
             const password = document.getElementById('a-password').value;
             try {
                 const user = await api('POST', '/api/auth/login', { email, password });
@@ -648,7 +650,9 @@
                 const chart = await api('GET', '/api/admin/revenue-chart');
                 const labels = chart.map(r => r.date);
                 const values = chart.map(r => r.total);
-                new Chart(document.getElementById('revenue-chart'), {
+                // Destroy old chart instance before creating new one to avoid "Canvas already in use" error
+                if (revenueChart) { revenueChart.destroy(); revenueChart = null; }
+                revenueChart = new Chart(document.getElementById('revenue-chart'), {
                     type: 'line',
                     data: {
                         labels, datasets: [{
@@ -668,7 +672,8 @@
                 const allStreams = await api('GET', '/api/admin/streams');
                 const types = { public: 0, private: 0, group: 0 };
                 allStreams.forEach(s => { if (types[s.type] !== undefined) types[s.type]++; });
-                new Chart(document.getElementById('type-chart'), {
+                if (typeChart) { typeChart.destroy(); typeChart = null; }
+                typeChart = new Chart(document.getElementById('type-chart'), {
                     type: 'doughnut',
                     data: {
                         labels: ['Public', 'Private', 'Group'],
@@ -789,7 +794,7 @@
                     document.getElementById('admin-name').textContent = user.username;
                     loadDashboard();
                 } else { adminLogout(); }
-            }).catch(() => { adminToken = null; });
+            }).catch(() => { adminLogout(); }); // Show login screen on expired/invalid token
         }
     </script>
 </body>

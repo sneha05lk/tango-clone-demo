@@ -7,9 +7,12 @@ const generateToken = (id) =>
 
 // POST /api/auth/register
 const register = (req, res) => {
-    const { username, email, password } = req.body;
+    let { username, email, password } = req.body;
     if (!username || !email || !password)
         return res.status(400).json({ message: 'All fields are required' });
+
+    username = username.trim();
+    email = email.trim().toLowerCase();
 
     db.get('SELECT id FROM users WHERE email = ? OR username = ?', [email, username], async (err, existing) => {
         if (existing) return res.status(400).json({ message: 'Username or email already taken' });
@@ -32,7 +35,12 @@ const register = (req, res) => {
 
 // POST /api/auth/login
 const login = (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+    if (!email || !password)
+        return res.status(400).json({ message: 'All fields are required' });
+        
+    email = email.trim().toLowerCase();
+    
     db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
         if (err || !user) return res.status(401).json({ message: 'Invalid email or password' });
         const match = await bcrypt.compare(password, user.password);

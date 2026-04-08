@@ -5,12 +5,13 @@ const {
     requestJoin, handleRequest, getRequests, searchStreams
 } = require('../controllers/streamController');
 const { protect } = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
 
 router.get('/', getStreams);                             // public streams (no auth)
 router.get('/all', protect, getAllStreams);              // all streams (authenticated)
 router.get('/search', searchStreams);                    // search streams
 router.get('/:id', getStreamById);
-router.post('/', protect, createStream);
+router.post('/', protect, upload.single('thumbnail'), createStream);
 router.put('/:id/end', protect, endStream);
 router.post('/:id/request', protect, requestJoin);
 router.put('/requests/:requestId', protect, handleRequest);

@@ -83,13 +83,14 @@ const getStreamById = (req, res) => {
 const createStream = (req, res) => {
     const { title, category, type } = req.body;
     const roomName = `room_${Date.now()}_${req.user.id}`;
+    const thumbnail = req.file ? '/uploads/' + req.file.filename : '';
 
     // Close any existing live stream by this host
     db.run('UPDATE streams SET is_live = 0 WHERE host_id = ? AND is_live = 1', [req.user.id]);
 
     db.run(
-        'INSERT INTO streams (title, category, type, host_id, is_live, livekit_room) VALUES (?, ?, ?, ?, 1, ?)',
-        [title || 'Untitled Stream', category || 'General', type || 'public', req.user.id, roomName],
+        'INSERT INTO streams (title, category, type, host_id, is_live, livekit_room, thumbnail) VALUES (?, ?, ?, ?, 1, ?, ?)',
+        [title || 'Untitled Stream', category || 'General', type || 'public', req.user.id, roomName, thumbnail],
         function (err) {
             if (err) return res.status(500).json({ message: err.message });
             db.get(

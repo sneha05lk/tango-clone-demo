@@ -15,6 +15,9 @@ let isHost = false;
 let guestTimerInterval = null;
 let pendingJoinRequest = null; // { userId, streamId, socket_id }
 let livekitRoom = null;
+let pendingGuestInvite = null; // { hostId, roomName }
+let isGuestStreamer = false;
+let activeGuestIds = new Set(); // To track UI elements for guests
 
 
 // ─── UTILITY ─────────────────────────────────────────────────────────
@@ -132,6 +135,37 @@ function initSocket() {
                     enterLiveScreen(currentStream);
                 }, 1000);
             }
+        });
+
+        // Co-streaming: Host invited me
+        socket.on('guest-invite-received', ({ hostId, hostName, roomName }) => {
+            if (isGuestStreamer) return; // Already streaming
+            pendingGuestInvite = { hostId, roomName };
+            $('guest-invite-msg').textContent = `${hostName} invited you to go live!`;
+            $('guest-invite-toast').classList.remove('hidden');
+            setTimeout(() => $('guest-invite-toast').classList.add('hidden'), 20000);
+        });
+
+        // Co-streaming: Viewer replied to host
+        socket.on('guest-invite-reply', ({ userId, username, accepted, roomName }) => {
+            if (accepted) {
+                appendChat('System', `🎉 ${username} accepted your invite and is joining!`, true);
+            } else {
+                appendChat('System', `❌ ${username} declined your invitation.`, true);
+            }
+        });
+
+        // Co-streaming: Host kicked me
+        socket.on('guest-kicked', ({ roomName }) => {
+            if (isGuestStreamer) {
+                alert('The host has ended your guest session.');
+                stopGuestStream();
+            }
+        });
+
+        // Co-streaming: Update grid when someone leaves
+        socket.on('guest-left', ({ userId }) => {
+            removeGuestVideo(userId);
         });
     }
 }
@@ -254,7 +288,12 @@ function navigateTo(screenName) {
     if (navItem) navItem.classList.add('active');
 
     // Side effects
-    if (screenName === 'golive') initCamera();
+    if (screenName === 'golive') {
+        initCamera();
+    } else {
+        stopCamera();
+    }
+    
     if (screenName === 'wallet') loadWallet();
     if (screenName === 'profile') renderProfile();
     if (screenName === 'chat') renderChatList();
@@ -275,13 +314,13 @@ function hideAuthOverlay() {
     if (!currentUser) startGuestTimer();
 }
 function showAuthForm(form) {
-    $('login-form').classList.toggle('hidden', form !== 'login');
-    $('register-form').classList.toggle('hidden', form !== 'register');
+    $('login-pane').classList.toggle('hidden', form !== 'login');
+    $('register-pane').classList.toggle('hidden', form !== 'register');
 }
 
 $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = $('login-email').value;
+    const email = $('login-email').value.trim().toLowerCase();
     const password = $('login-password').value;
     try {
         const user = await apiReq('POST', '/api/auth/login', { email, password });
@@ -295,8 +334,8 @@ $('login-form').addEventListener('submit', async (e) => {
 
 $('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = $('reg-username').value;
-    const email = $('reg-email').value;
+    const username = $('reg-username').value.trim();
+    const email = $('reg-email').value.trim().toLowerCase();
     const password = $('reg-password').value;
     try {
         const user = await apiReq('POST', '/api/auth/register', { username, email, password });
@@ -426,14 +465,25 @@ function renderStreamFeed(streams, cat) {
     feed.innerHTML = renderStreamFeedHTML(filtered);
 }
 
+function captureThumbnail() {
+    const video = document.getElementById('local-video');
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
+}
+
 function renderStreamFeedHTML(streams) {
     return streams.map((s, i) => {
         const initials = s.username ? s.username.charAt(0).toUpperCase() : '?';
+        const thumbBg = s.thumbnail ? `background-image:url(${s.thumbnail});background-size:cover;background-position:center;` : '';
 
         return `
     <div class="stream-card" style="animation-delay:${i * 0.07}s" onclick="openStream(${s.id})">
-      <div class="stream-thumb">
-        <span class="stream-thumb-emoji">${STREAM_EMOJIS[s.category] || '🌐'}</span>
+      <div class="stream-thumb" style="${thumbBg}">
+        ${!s.thumbnail ? `<span class="stream-thumb-emoji">${STREAM_EMOJIS[s.category] || '🌐'}</span>` : ''}
+        <div class="stream-thumb-overlay"></div>
         <span style="position:absolute;top:8px;left:8px;z-index:2">
           <span class="live-badge">LIVE</span>
           ${s.is_trending ? '<span class="trending-badge">🔥 TRENDING</span>' : ''}
@@ -494,6 +544,13 @@ async function openStream(streamId) {
 
 function enterLiveScreen(stream) {
     currentStream = stream;
+    stopCamera(); // Ensure preview camera is released
+    
+    // NEW: Reset co-streaming states for the new session
+    activeGuestIds.clear();
+    isGuestStreamer = false;
+    $('video-area').innerHTML = ''; // Clear all old video wrappers
+    $('video-area').className = 'video-area grid-1'; // Reset grid
 
     // Update HUD
     $('hud-title').textContent = stream.title || 'Live Stream';
@@ -503,16 +560,26 @@ function enterLiveScreen(stream) {
     setAvatar($('hud-host-avatar'), stream.avatar, stream.username || 'H');
 
     // Show/hide end stream button & host controls
-    $('end-stream-btn').classList.toggle('hidden', !isHost);
-    $('host-controls').classList.toggle('hidden', !isHost);
+    const endBtn = $('end-stream-btn');
+    if (endBtn) endBtn.classList.toggle('hidden', !isHost);
+    
+    const hostCtrls = $('host-controls');
+    if (hostCtrls) hostCtrls.classList.toggle('hidden', !isHost);
 
     // Initial state for host toggles
     if (isHost) {
-        $('hud-mic-btn').classList.remove('muted');
-        $('hud-cam-btn').classList.remove('muted');
-        $('hud-mic-btn').textContent = '🎤';
-        $('hud-cam-btn').textContent = '📷';
-        $('video-placeholder').classList.add('hidden');
+        const micBtn = $('hud-mic-btn');
+        const camBtn = $('hud-cam-btn');
+        if (micBtn) {
+            micBtn.classList.remove('muted');
+            micBtn.textContent = '🎤';
+        }
+        if (camBtn) {
+            camBtn.classList.remove('muted');
+            camBtn.textContent = '📷';
+        }
+        const vPlaceholder = $('video-placeholder');
+        if (vPlaceholder) vPlaceholder.classList.add('hidden');
     }
 
     // Clear chat
@@ -527,9 +594,28 @@ function enterLiveScreen(stream) {
     initSocket();
     joinRoom(stream.livekit_room);
 
-    // Explicitly reset video layer visibility for the current role
-    $('remote-video').classList.toggle('hidden', isHost);
-    $('local-video').classList.toggle('hidden', !isHost);
+    // Create host's own local video wrapper in the grid
+    if (isHost) {
+        const videoArea = $('video-area');
+        const localWrapper = document.createElement('div');
+        localWrapper.id = 'video-wrapper-__local__';
+        localWrapper.className = 'video-wrapper';
+        const localVid = document.createElement('video');
+        localVid.id = 'local-video';
+        localVid.className = 'live-video';
+        localVid.autoplay = true;
+        localVid.muted = true;
+        localVid.playsInline = true;
+        const badge = document.createElement('div');
+        badge.className = 'guest-name-badge';
+        badge.textContent = (currentUser?.username || 'You') + ' (Host)';
+        localWrapper.appendChild(localVid);
+        localWrapper.appendChild(badge);
+        videoArea.insertBefore(localWrapper, videoArea.firstChild);
+        // Note: We don't add '__local__' to activeGuestIds anymore. 
+        // updateVideoGrid() handles the local user separately.
+        updateVideoGrid();
+    }
 
     // Fetch LiveKit token and connect (now allowing guests!)
     apiReq('POST', '/api/livekit/token', {
@@ -572,19 +658,21 @@ async function toggleFollow() {
 }
 
 async function updateFollowButton() {
+    const btn = $('hud-follow-btn');
+    if (!btn) return;
+
     if (!currentUser || !currentStream || isHost) {
-        $('hud-follow-btn').classList.add('hidden');
+        btn.classList.add('hidden');
         return;
     }
 
     try {
         const { isFollowing } = await apiReq('GET', `/api/users/follow-status/${currentStream.host_id}`);
-        const btn = $('hud-follow-btn');
         btn.classList.remove('hidden');
         btn.classList.toggle('following', isFollowing);
         btn.textContent = isFollowing ? 'Following' : '+ Follow';
     } catch (e) {
-        $('hud-follow-btn').classList.add('hidden');
+        btn.classList.add('hidden');
     }
 }
 
@@ -646,11 +734,22 @@ async function connectToLiveKit(token, roomName) {
                 console.log(`[Host] Local ${track.kind} track published`);
                 if (track.kind === 'video') {
                    const localVideo = $('local-video');
-                   localVideo.classList.remove('hidden');
-                   track.attach(localVideo);
+                   if (localVideo) {
+                       localVideo.classList.remove('hidden');
+                       track.attach(localVideo);
+                   }
                 }
             }
             console.log('Host tracks active and publishing');
+        } else {
+            // If viewer, handle participants who are already in the room
+            livekitRoom.remoteParticipants.forEach(participant => {
+                participant.trackPublications.forEach(publication => {
+                    if (publication.track) {
+                        handleTrackSubscribed(publication.track, publication, participant);
+                    }
+                });
+            });
         }
     } catch (error) {
         console.error('Failed to connect to LiveKit:', error);
@@ -661,14 +760,11 @@ async function connectToLiveKit(token, roomName) {
 function handleTrackSubscribed(track, publication, participant) {
     console.log('Track subscribed:', track.kind, participant.identity);
     if (track.kind === 'video') {
-        const videoEl = $('remote-video');
-        track.attach(videoEl);
+        renderParticipantVideo(participant, track);
         // If track is already muted when subscribed
         if (publication.isMuted) {
             handleTrackMuteChange(publication, participant, true);
         }
-        // Explicitly play to bypass some browser hesitation
-        videoEl.play().catch(e => console.warn('Autoplay prevented video:', e));
     } else if (track.kind === 'audio') {
         const audioId = `audio-track-${participant.identity}`;
         let existing = $(audioId);
@@ -676,22 +772,86 @@ function handleTrackSubscribed(track, publication, participant) {
 
         const el = track.attach();
         el.id = audioId;
-        // Make sure it's not and stays visible or playing
         document.body.appendChild(el); 
         el.play().catch(e => {
-            console.warn('Initial audio play() failed, waiting for user gesture:', e);
+            console.warn('Initial audio play() failed:', e);
             showAudioPrompt();
         });
-        
-        console.log('Audio track attached and active for:', participant.identity);
+        console.log('Audio track attached for:', participant.identity);
     }
+}
+
+function renderParticipantVideo(participant, track) {
+    const videoArea = $('video-area');
+    const wrapperId = `video-wrapper-${participant.identity}`;
+    let wrapper = $(wrapperId);
+
+    if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.id = wrapperId;
+        wrapper.className = 'video-wrapper';
+        
+        const videoEl = document.createElement('video');
+        videoEl.id = `video-${participant.identity}`;
+        videoEl.className = 'live-video';
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+        
+        const badge = document.createElement('div');
+        badge.className = 'guest-name-badge';
+        badge.textContent = participant.identity || 'Guest';
+        
+        wrapper.appendChild(videoEl);
+        wrapper.appendChild(badge);
+
+        // If I am host, add a Kick button for guests (but not for myself)
+        if (isHost && !participant.isLocal) {
+            const kickBtn = document.createElement('button');
+            kickBtn.className = 'kick-btn-overlay';
+            kickBtn.innerHTML = '✕';
+            kickBtn.onclick = (e) => { e.stopPropagation(); kickGuest(participant.identity); };
+            wrapper.appendChild(kickBtn);
+        }
+
+        videoArea.appendChild(wrapper);
+        activeGuestIds.add(participant.identity);
+        updateVideoGrid();
+    }
+
+    const video = wrapper.querySelector('video');
+    track.attach(video);
+    video.play().catch(e => console.warn('Autoplay prevented video:', e));
 }
 
 function handleTrackUnsubscribed(track, publication, participant) {
     track.detach();
     if (track.kind === 'video') {
-        $('remote-video').classList.add('hidden');
+       removeGuestVideo(participant.identity);
     }
+}
+
+function removeGuestVideo(identity) {
+    const wrapper = $(`video-wrapper-${identity}`);
+    if (wrapper) {
+        wrapper.remove();
+        activeGuestIds.delete(identity);
+        updateVideoGrid();
+    }
+}
+
+function updateVideoGrid() {
+    const area = $('video-area');
+    if (!area) return;
+
+    const count = activeGuestIds.size + (isHost || isGuestStreamer ? 1 : 0); // Participants + Local 
+    
+    // Clear old grid classes
+    area.classList.remove('grid-1', 'grid-2', 'grid-3', 'grid-4');
+    
+    if (count <= 1) area.classList.add('grid-1');
+    else if (count === 2) area.classList.add('grid-2');
+    else if (count === 3) area.classList.add('grid-3');
+    else area.classList.add('grid-4');
 }
 
 function handleAudioPlaybackStatus() {
@@ -761,6 +921,10 @@ function leaveLiveScreen() {
     currentStream = null;
 
     isHost = false;
+    isGuestStreamer = false;
+    activeGuestIds.clear();
+    $('video-area').innerHTML = ''; // Clean up all video elements
+    
     clearGuestTimer();
     $('guest-timer-popup').classList.add('hidden');
     stopCamera();
@@ -783,6 +947,23 @@ function stopCamera() {
     if (preview) preview.srcObject = null;
 }
 
+// Capture a single frame from the camera preview as a Blob (JPEG)
+function captureThumbnail() {
+    return new Promise((resolve) => {
+        const video = $('camera-preview');
+        if (!video || !video.srcObject || video.videoWidth === 0) {
+            resolve(null);
+            return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = 480;
+        canvas.height = 270; // 16:9
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.85);
+    });
+}
+
 // Stream type picker
 document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -797,12 +978,37 @@ $('go-live-btn').addEventListener('click', async () => {
     const category = $('stream-category').value;
     const type = document.querySelector('.type-btn.active')?.dataset.type || 'public';
 
+    const btn = $('go-live-btn');
+    btn.disabled = true;
+    btn.textContent = '📸 Capturing...';
+
     try {
-        const stream = await apiReq('POST', '/api/streams', { title, category, type });
+        // 1. Capture a thumbnail frame from the camera preview
+        const thumbnailBlob = await captureThumbnail();
+
+        // 2. Build FormData so we can send both text fields + the image file
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('category', category);
+        formData.append('type', type);
+        if (thumbnailBlob) {
+            formData.append('thumbnail', thumbnailBlob, 'thumb.jpg');
+        }
+
+        // 3. Create stream with thumbnail (multipart request – can't use apiReq helper)
+        btn.textContent = '🚀 Going Live...';
+        const res = await fetch('/api/streams', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+        });
+        const stream = await res.json();
+        if (!res.ok) throw new Error(stream.message || 'Failed to create stream');
+
         currentStream = stream;
         isHost = true;
 
-        // Fetch LiveKit token for host
+        // 4. Fetch LiveKit token for host
         const tkData = await apiReq('POST', '/api/livekit/token', {
             room: stream.livekit_room,
             identity: currentUser.username,
@@ -811,12 +1017,11 @@ $('go-live-btn').addEventListener('click', async () => {
 
         enterLiveScreen(stream);
         connectToLiveKit(tkData.token, stream.livekit_room);
-
-        // We don't set localVideo.srcObject here anymore because connectToLiveKit
-        // will handle track publication and display
-        $('remote-video').classList.add('hidden');
     } catch (err) {
         alert('Failed to go live: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="live-dot-anim"></span> GO LIVE';
     }
 });
 
@@ -905,9 +1110,9 @@ async function sendGift(giftId) {
             receiver_id: currentStream.host_id,
         });
         socket?.emit('gift-sent', {
-            roomName: currentStream.livekit_room,
+            roomName: currentStream?.livekit_room,
             gift,
-            receiverUsername: currentStream.username,
+            receiverUsername: currentStream?.username,
         });
         showGiftBurst(gift.icon, 'You', gift.name);
         $('gift-panel').classList.add('hidden');
@@ -1243,12 +1448,29 @@ async function viewUserProfile(userId) {
         if (currentUser) {
             const { isFollowing } = await apiReq('GET', `/api/users/follow-status/${userId}`);
             const btn = $('v-follow-btn');
-            btn.classList.remove('hidden');
-            btn.classList.toggle('following', isFollowing);
-            btn.textContent = isFollowing ? 'Following' : '+ Follow';
+            if (btn) {
+                btn.classList.remove('hidden');
+                btn.classList.toggle('following', isFollowing);
+                btn.textContent = isFollowing ? 'Following' : '+ Follow';
+            }
+
+            // NEW: Show Invite button if I am the Host
+            const inviteBtn = $('v-invite-btn');
+            if (inviteBtn) {
+                if (isHost && currentStream && userId !== currentUser.id) {
+                    inviteBtn.classList.remove('hidden');
+                } else {
+                    inviteBtn.classList.add('hidden');
+                }
+            }
         } else {
-            $('v-follow-btn').classList.remove('hidden');
-            $('v-follow-btn').textContent = '+ Follow';
+            const fBtn = $('v-follow-btn');
+            if (fBtn) {
+                fBtn.classList.remove('hidden');
+                fBtn.textContent = '+ Follow';
+            }
+            const iBtn = $('v-invite-btn');
+            if (iBtn) iBtn.classList.add('hidden');
         }
     } catch (e) {
         console.error("View profile error", e);
@@ -1328,27 +1550,79 @@ function goBackFromFollowList() {
 function handleTrackMuteChange(pub, part, isMuted) {
     if (pub.kind !== 'video') return;
     
-    const placeholder = $('video-placeholder');
-    const avatar = $('placeholder-avatar-el');
-    const remoteVideo = $('remote-video');
-    const localVideo = $('local-video');
+    const wrapper = $(`video-wrapper-${part.identity || '__local__'}`);
+    const video = wrapper ? wrapper.querySelector('video') : null;
 
     if (isMuted) {
-        placeholder.classList.remove('hidden');
-        avatar.textContent = part.identity ? part.identity.charAt(0).toUpperCase() : '?';
-        if (part.isLocal) {
-            localVideo.classList.add('hidden');
-        } else {
-            remoteVideo.classList.add('hidden');
-        }
+        if (video) video.classList.add('hidden');
+        // We could show a specific placeholder within the wrapper here
     } else {
-        placeholder.classList.add('hidden');
-        if (part.isLocal) {
-            localVideo.classList.remove('hidden');
-        } else {
-            remoteVideo.classList.remove('hidden');
-        }
+        if (video) video.classList.remove('hidden');
     }
+}
+
+// ─── GUEST STREAMING LOGIC ───────────────────────────────────────────
+function inviteToStream() {
+    if (!viewProfileUserId || !currentStream || !isHost) return;
+    socket?.emit('guest-invite', { userId: viewProfileUserId, roomName: currentStream.livekit_room });
+    appendChat('System', `📡 Invitation sent to ${$('v-profile-username').textContent}`, true);
+    closeModal('v-profile-modal'); 
+    navigateTo('live');
+}
+
+async function acceptGuestInvite(accepted) {
+    $('guest-invite-toast').classList.add('hidden');
+    if (!pendingGuestInvite) return;
+    
+    const { hostId, roomName } = pendingGuestInvite;
+    socket?.emit('guest-invite-response', { hostId, accepted, roomName });
+    
+    if (accepted) {
+        switchToGuestStreamer(roomName);
+    }
+    pendingGuestInvite = null;
+}
+
+async function switchToGuestStreamer(roomName) {
+    try {
+        console.log('[Guest] Switching to streamer role...');
+        // 1. Get new token with canPublish: true
+        const tkData = await apiReq('POST', '/api/livekit/token', {
+            room: roomName,
+            identity: currentUser.username,
+            canPublish: true
+        });
+
+        isGuestStreamer = true;
+        
+        // 2. Reconnect to LiveKit as Guest Streamer
+        // Note: we temporarily set isHost=true so connectToLiveKit publishes tracks
+        const originalIsHost = isHost;
+        isHost = true; 
+        await connectToLiveKit(tkData.token, roomName);
+        isHost = originalIsHost; // Restore host status (usually false for guest)
+        
+        appendChat('System', '🎥 You are now live as a guest!', true);
+    } catch (err) {
+        alert('Failed to join as guest: ' + err.message);
+        isGuestStreamer = false;
+    }
+}
+
+function stopGuestStream() {
+    if (!isGuestStreamer) return;
+    isGuestStreamer = false;
+    socket?.emit('end-guest-session', { roomName: currentStream?.livekit_room });
+    
+    // Re-join as viewer (no publish)
+    if (currentStream) {
+        enterLiveScreen(currentStream); 
+    }
+}
+
+function kickGuest(userId) {
+    if (!isHost || !currentStream) return;
+    socket?.emit('kick-guest', { userId, roomName: currentStream.livekit_room });
 }
 
 // ─── HOST CONTROLS ────────────────────────────────────────────────────
@@ -1399,7 +1673,7 @@ async function respondToJoinRequest(approved) {
 
     // Update DB
     try { await apiReq('POST', `/api/streams/${currentStream.id}/request`, {}); } catch { }
-    socket?.emit('join-request-response', { userId, approved, roomName: currentStream.livekit_room });
+    socket?.emit('join-request-response', { userId, approved, roomName: currentStream?.livekit_room });
     pendingJoinRequest = null;
 }
 
