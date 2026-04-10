@@ -18,6 +18,8 @@ let livekitRoom = null;
 let pendingGuestInvite = null; // { hostId, roomName }
 let isGuestStreamer = false;
 let activeGuestIds = new Set(); // To track UI elements for guests
+let isMutedByViewer = false; // Viewer-side global mute state
+let cachedLivekitUrl = null;
 
 
 // ─── UTILITY ─────────────────────────────────────────────────────────
@@ -565,8 +567,11 @@ function enterLiveScreen(stream) {
     
     const hostCtrls = $('host-controls');
     if (hostCtrls) hostCtrls.classList.toggle('hidden', !isHost);
+    
+    const viewerCtrls = $('viewer-controls');
+    if (viewerCtrls) viewerCtrls.classList.toggle('hidden', isHost);
 
-    // Initial state for host toggles
+    // Initial state for host/viewer toggles
     if (isHost) {
         const micBtn = $('hud-mic-btn');
         const camBtn = $('hud-cam-btn');
@@ -580,6 +585,13 @@ function enterLiveScreen(stream) {
         }
         const vPlaceholder = $('video-placeholder');
         if (vPlaceholder) vPlaceholder.classList.add('hidden');
+    } else {
+        isMutedByViewer = false;
+        const vMuteBtn = $('viewer-mute-btn');
+        if (vMuteBtn) {
+            vMuteBtn.classList.remove('muted');
+            vMuteBtn.textContent = '🔊';
+        }
     }
 
     // Clear chat
@@ -598,7 +610,7 @@ function enterLiveScreen(stream) {
     if (isHost) {
         const videoArea = $('video-area');
         const localWrapper = document.createElement('div');
-        localWrapper.id = 'video-wrapper-__local__';
+        localWrapper.id = `video-wrapper-${currentUser.username}`;
         localWrapper.className = 'video-wrapper';
         const localVid = document.createElement('video');
         localVid.id = 'local-video';
@@ -689,6 +701,13 @@ async function connectToLiveKit(token, roomName) {
     livekitRoom = new LivekitClient.Room({
         adaptiveStream: true,
         dynacast: true,
+        videoCaptureDefaults: {
+            resolution: LivekitClient.VideoPresets.h720.resolution,
+        },
+        publishDefaults: {
+            simulcast: true,
+            videoEncoding: LivekitClient.VideoPresets.h720.encoding,
+        }
     });
 
     // Setup event listeners
@@ -703,11 +722,15 @@ async function connectToLiveKit(token, roomName) {
         });
 
     try {
-        const config = await apiReq('GET', '/api/config');
-        const livekitUrl = config.livekitUrl;
+        const livekitUrl = cachedLivekitUrl || (await apiReq('GET', '/api/config')).livekitUrl;
+        cachedLivekitUrl = livekitUrl;
         
         await livekitRoom.connect(livekitUrl, token);
         console.log('Connected to LiveKit room:', roomName);
+        
+        // Hide connection overlay after successful connect
+        const connOverlay = $('connection-overlay');
+        if (connOverlay) connOverlay.classList.add('hidden');
 
         // Check if audio is already blocked at start
         if (!isHost && !livekitRoom.canPlaybackAudio) {
@@ -727,7 +750,10 @@ async function connectToLiveKit(token, roomName) {
             // Publish local tracks
             const tracks = await LivekitClient.createLocalTracks({
                 audio: true,
-                video: { resolution: LivekitClient.VideoPresets.h720.resolution },
+                video: { 
+                    resolution: LivekitClient.VideoPresets.h720.resolution,
+                    encoding: LivekitClient.VideoPresets.h720.encoding
+                },
             });
             for (const track of tracks) {
                 await livekitRoom.localParticipant.publishTrack(track);
@@ -743,13 +769,16 @@ async function connectToLiveKit(token, roomName) {
             console.log('Host tracks active and publishing');
         } else {
             // If viewer, handle participants who are already in the room
-            livekitRoom.remoteParticipants.forEach(participant => {
-                participant.trackPublications.forEach(publication => {
-                    if (publication.track) {
-                        handleTrackSubscribed(publication.track, publication, participant);
-                    }
+            // Give it a tiny delay to ensure tracks are ready
+            setTimeout(() => {
+                livekitRoom.remoteParticipants.forEach(participant => {
+                    participant.trackPublications.forEach(publication => {
+                        if (publication.track) {
+                            handleTrackSubscribed(publication.track, publication, participant);
+                        }
+                    });
                 });
-            });
+            }, 500);
         }
     } catch (error) {
         console.error('Failed to connect to LiveKit:', error);
@@ -772,11 +801,14 @@ function handleTrackSubscribed(track, publication, participant) {
 
         const el = track.attach();
         el.id = audioId;
+        el.muted = isMutedByViewer;
         document.body.appendChild(el); 
-        el.play().catch(e => {
-            console.warn('Initial audio play() failed:', e);
-            showAudioPrompt();
-        });
+        if (!isMutedByViewer) {
+            el.play().catch(e => {
+                console.warn('Initial audio play() failed:', e);
+                showAudioPrompt();
+            });
+        }
         console.log('Audio track attached for:', participant.identity);
     }
 }
@@ -1548,16 +1580,24 @@ function goBackFromFollowList() {
 }
 
 function handleTrackMuteChange(pub, part, isMuted) {
-    if (pub.kind !== 'video') return;
+    const identity = part.identity;
+    const wrapper = $(`video-wrapper-${identity}`);
     
-    const wrapper = $(`video-wrapper-${part.identity || '__local__'}`);
-    const video = wrapper ? wrapper.querySelector('video') : null;
-
-    if (isMuted) {
-        if (video) video.classList.add('hidden');
-        // We could show a specific placeholder within the wrapper here
-    } else {
-        if (video) video.classList.remove('hidden');
+    if (pub.kind === 'video') {
+        const video = wrapper ? wrapper.querySelector('video') : null;
+        if (isMuted) {
+            if (video) video.classList.add('hidden');
+        } else {
+            if (video) video.classList.remove('hidden');
+        }
+    } else if (pub.kind === 'audio') {
+        const audioId = `audio-track-${part.identity}`;
+        const audioEl = $(audioId);
+        if (audioEl) {
+            // If the host muted their mic, we mute the local playback element
+            // (LiveKit usually stops the stream, but this ensures UI/state consistency)
+            audioEl.muted = isMuted || isMutedByViewer;
+        }
     }
 }
 
@@ -1626,26 +1666,59 @@ function kickGuest(userId) {
 }
 
 // ─── HOST CONTROLS ────────────────────────────────────────────────────
-function toggleMic() {
+async function toggleMic() {
     if (!livekitRoom || !isHost) return;
     const enabled = livekitRoom.localParticipant.isMicrophoneEnabled;
-    livekitRoom.localParticipant.setMicrophoneEnabled(!enabled);
-    
     const btn = $('hud-mic-btn');
-    btn.classList.toggle('muted', enabled);
-    btn.textContent = enabled ? '🔇' : '🎤';
+    btn.disabled = true; // Prevent double-clicks
+
+    try {
+        await livekitRoom.localParticipant.setMicrophoneEnabled(!enabled);
+        btn.classList.toggle('muted', enabled);
+        btn.textContent = enabled ? '🔇' : '🎤';
+    } catch (e) {
+        console.error('Failed to toggle mic:', e);
+    } finally {
+        btn.disabled = false;
+    }
 }
 
-function toggleCam() {
+async function toggleCam() {
     if (!livekitRoom || !isHost) return;
     const enabled = livekitRoom.localParticipant.isCameraEnabled;
-    livekitRoom.localParticipant.setCameraEnabled(!enabled);
-    
     const btn = $('hud-cam-btn');
-    btn.classList.toggle('muted', enabled);
-    btn.textContent = enabled ? '🚫' : '📷';
-    
-    // UI update handled by TrackMuted listener
+    btn.disabled = true;
+
+    try {
+        await livekitRoom.localParticipant.setCameraEnabled(!enabled);
+        btn.classList.toggle('muted', enabled);
+        btn.textContent = enabled ? '🚫' : '📷';
+    } catch (e) {
+        console.error('Failed to toggle camera:', e);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function toggleViewerMute() {
+    isMutedByViewer = !isMutedByViewer;
+    const btn = $('viewer-mute-btn');
+    if (btn) {
+        btn.classList.toggle('muted', isMutedByViewer);
+        btn.textContent = isMutedByViewer ? '🔇' : '🔊';
+    }
+
+    // Apply to all currently attached audio elements
+    document.querySelectorAll('audio[id^="audio-track-"]').forEach(el => {
+        el.muted = isMutedByViewer;
+        if (!isMutedByViewer) {
+            el.play().catch(() => {});
+        }
+    });
+
+    if (!isMutedByViewer && livekitRoom) {
+        livekitRoom.startAudio().catch(() => {});
+    }
 }
 
 // ─── PRIVATE/GROUP JOIN REQUEST ────────────────────────────────────────
@@ -1704,6 +1777,11 @@ function closeModal(id) { $(id)?.classList.add('hidden'); }
     initSocket();
     initSearch();
     loadStreams();
+    
+    // Pre-fetch config to speed up connections
+    apiReq('GET', '/api/config').then(data => {
+        cachedLivekitUrl = data.livekitUrl;
+    }).catch(() => {});
 
     // If no user, show auth on first load after brief delay
     if (!currentUser) {

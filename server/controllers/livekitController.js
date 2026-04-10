@@ -44,6 +44,7 @@ const getToken = async (req, res) => {
             room,
             roomJoin: true,
             canPublish: publishAllowed,
+            canPublishData: publishAllowed,
             canSubscribe: true,
         });
         const token = await at.toJwt();

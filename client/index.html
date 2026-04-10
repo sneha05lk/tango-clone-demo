@@ -163,6 +163,10 @@
               <div class="placeholder-avatar" id="placeholder-avatar-el"></div>
               <p>Camera is Off</p>
             </div>
+            <div id="connection-overlay" class="video-placeholder">
+              <div class="spinner"></div>
+              <p>Connecting to stream...</p>
+            </div>
             <div id="reaction-overlay" class="reaction-overlay"></div>
           </div>
 
@@ -180,7 +184,13 @@
             <!-- New: Host Controls -->
             <div id="host-controls" class="host-controls hidden">
               <button id="hud-mic-btn" class="hud-ctrl-btn" onclick="toggleMic()" title="Mute/Unmute Mic">🎤</button>
-              <button id="hud-cam-btn" class="hud-ctrl-btn" onclick="toggleCam()" title="Enable/Disable Camera">📷</button>
+              <button id="hud-cam-btn" class="hud-ctrl-btn" onclick="toggleCam()"
+                title="Enable/Disable Camera">📷</button>
+            </div>
+
+            <!-- Viewer Controls -->
+            <div id="viewer-controls" class="host-controls">
+              <button id="viewer-mute-btn" class="hud-ctrl-btn" onclick="toggleViewerMute()" title="Mute/Unmute Stream">🔊</button>
             </div>
 
             <div class="hud-host">
@@ -338,7 +348,7 @@
           </div>
         </div>
       </section>
-      
+
 
 
       <!-- ── USER PROFILE VIEW SCREEN ── -->
@@ -348,29 +358,38 @@
             <button class="back-btn-alt" onclick="navigateTo('home')">←</button>
             <h2 class="screen-title" style="margin-bottom:0">Profile</h2>
           </header>
-          
+
           <div class="profile-main-card glass" style="margin-top:20px; padding:30px 20px; text-align:center;">
             <div class="profile-avatar-xl" id="v-profile-avatar"></div>
             <h2 id="v-profile-username" style="margin: 15px 0 5px; font-size:1.6rem;">Username</h2>
-            <p id="v-profile-bio" class="profile-bio" style="color:var(--text-muted); font-size:0.95rem; margin-bottom:20px;">No bio provided.</p>
-            
-            <div class="profile-stats-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:25px;">
+            <p id="v-profile-bio" class="profile-bio"
+              style="color:var(--text-muted); font-size:0.95rem; margin-bottom:20px;">No bio provided.</p>
+
+            <div class="profile-stats-grid"
+              style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:25px;">
               <div class="stat-item">
-                <div class="stat-val" id="v-profile-followers" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
-                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Followers</div>
+                <div class="stat-val" id="v-profile-followers"
+                  style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">
+                  Followers</div>
               </div>
               <div class="stat-item">
-                <div class="stat-val" id="v-profile-following" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
-                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Following</div>
+                <div class="stat-val" id="v-profile-following"
+                  style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">
+                  Following</div>
               </div>
               <div class="stat-item">
-                <div class="stat-val" id="v-profile-coins" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0</div>
-                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">Earned</div>
+                <div class="stat-val" id="v-profile-coins" style="font-size:1.4rem; font-weight:800; color:#fbbf24;">0
+                </div>
+                <div class="stat-key" style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted);">
+                  Earned</div>
               </div>
             </div>
-            
+
             <div class="profile-view-actions" style="display:flex; flex-direction:column; gap:10px;">
-              <button id="v-follow-btn" class="btn-primary w-full" onclick="toggleFollowProfile()" style="padding:14px;">+ Follow</button>
+              <button id="v-follow-btn" class="btn-primary w-full" onclick="toggleFollowProfile()"
+                style="padding:14px;">+ Follow</button>
               <button class="btn-ghost w-full" id="v-message-btn" style="padding:12px;">💬 Send Message</button>
             </div>
           </div>
@@ -423,7 +442,7 @@
       <span class="popup-icon">👤</span>
       <h3>Edit Profile</h3>
       <p>Update your details to stand out!</p>
-      
+
       <div class="input-group">
         <label>Profile Picture</label>
         <div class="avatar-edit-wrap" onclick="$('avatar-input').click()">
@@ -437,7 +456,7 @@
         <label for="edit-username">Username</label>
         <input type="text" id="edit-username" placeholder="Enter new username" />
       </div>
-      
+
       <div class="input-group">
         <label for="edit-bio">Short Bio</label>
         <textarea id="edit-bio" placeholder="Tell the world about yourself..." rows="3"></textarea>

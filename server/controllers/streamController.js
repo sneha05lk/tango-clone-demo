@@ -1,164 +1,293 @@
 const { db } = require('../config/db');
 
+// Helper to format streams output
+const formatStreams = (streams) => {
+    if (!streams) return [];
+    return streams.map(s => {
+        const host = s.users || {};
+        return {
+            ...s,
+            users: undefined,
+            username: host.username,
+            avatar: host.avatar,
+            is_trending: s.viewer_count > 5 ? 1 : 0
+        };
+    });
+};
+
 // GET /api/streams - list all live public streams
-const getStreams = (req, res) => {
-    db.all(
-        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
-     JOIN users u ON s.host_id = u.id
-     WHERE s.is_live = 1 AND s.type = 'public'
-     ORDER BY s.viewer_count DESC`,
-        [],
-        (err, rows) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(rows);
-        }
-    );
+const getStreams = async (req, res) => {
+    try {
+        const { data: streams, error } = await db
+            .from('streams')
+            .select(`
+                *,
+                users!host_id (username, avatar)
+            `)
+            .eq('is_live', true)
+            .eq('type', 'public')
+            .order('viewer_count', { ascending: false });
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json(formatStreams(streams));
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/streams/all - list all streams (incl. group/private) for authenticated users or special categories
-const getAllStreams = (req, res) => {
+const getAllStreams = async (req, res) => {
     const { category } = req.query;
 
-    if (category === 'following' && req.user) {
-        db.all(
-            `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
-             JOIN users u ON s.host_id = u.id
-             JOIN followers f ON f.following_id = s.host_id
-             WHERE s.is_live = 1 AND f.follower_id = ?
-             ORDER BY s.viewer_count DESC`,
-            [req.user.id],
-            (err, rows) => {
-                if (err) return res.status(500).json({ message: err.message });
-                res.json(rows);
+    try {
+        if (category === 'following' && req.user) {
+            // First get who the user is following
+            const { data: followingList } = await db
+                .from('followers')
+                .select('following_id')
+                .eq('follower_id', req.user.id);
+
+            const followingIds = followingList ? followingList.map(f => f.following_id) : [];
+
+            if (followingIds.length === 0) {
+                 return res.json([]);
             }
-        );
-    } else {
-        db.all(
-            `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
-             JOIN users u ON s.host_id = u.id
-             WHERE s.is_live = 1
-             ORDER BY s.viewer_count DESC`,
-            [],
-            (err, rows) => {
-                if (err) return res.status(500).json({ message: err.message });
-                res.json(rows);
-            }
-        );
+
+            const { data: streams, error } = await db
+                .from('streams')
+                .select(`
+                    *,
+                    users!host_id (username, avatar)
+                `)
+                .eq('is_live', true)
+                .in('host_id', followingIds)
+                .order('viewer_count', { ascending: false });
+
+            if (error) return res.status(500).json({ message: error.message });
+            res.json(formatStreams(streams));
+        } else {
+            const { data: streams, error } = await db
+                .from('streams')
+                .select(`
+                    *,
+                    users!host_id (username, avatar)
+                `)
+                .eq('is_live', true)
+                .order('viewer_count', { ascending: false });
+
+            if (error) return res.status(500).json({ message: error.message });
+            res.json(formatStreams(streams));
+        }
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
     }
 };
 
 // GET /api/streams/search?q=query
-const searchStreams = (req, res) => {
+const searchStreams = async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json([]);
 
-    db.all(
-        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
-         JOIN users u ON s.host_id = u.id
-         WHERE s.is_live = 1 AND (s.title LIKE ? OR u.username LIKE ?)
-         ORDER BY s.viewer_count DESC`,
-        [`%${query}%`, `%${query}%`],
-        (err, rows) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(rows);
+    try {
+        // Find users that match query
+        const { data: matchedUsers } = await db
+             .from('users')
+             .select('id')
+             .ilike('username', `%${query}%`);
+             
+        const hostIds = matchedUsers ? matchedUsers.map(u => u.id) : [];
+
+        // It's a bit complex to do OR on joined column natively in Supabase JS easily,
+        // so we search titles OR host_id in matchedUsers
+        let queryBuilder = db
+            .from('streams')
+            .select(`
+                *,
+                users!host_id (username, avatar)
+            `)
+            .eq('is_live', true);
+
+        if (hostIds.length > 0) {
+             queryBuilder = queryBuilder.or(`title.ilike.%${query}%,host_id.in.(${hostIds.join(',')})`);
+        } else {
+             queryBuilder = queryBuilder.ilike('title', `%${query}%`);
         }
-    );
+
+        const { data: streams, error } = await queryBuilder.order('viewer_count', { ascending: false });
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json(formatStreams(streams));
+    } catch (e) {
+         res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/streams/:id
-const getStreamById = (req, res) => {
-    db.get(
-        `SELECT s.*, u.username, u.avatar, (CASE WHEN s.viewer_count > 5 THEN 1 ELSE 0 END) as is_trending FROM streams s
-     JOIN users u ON s.host_id = u.id
-     WHERE s.id = ?`,
-        [req.params.id],
-        (err, row) => {
-            if (err || !row) return res.status(404).json({ message: 'Stream not found' });
-            res.json(row);
-        }
-    );
+const getStreamById = async (req, res) => {
+    try {
+        const { data: stream, error } = await db
+            .from('streams')
+            .select(`
+                *,
+                users!host_id (username, avatar)
+            `)
+            .eq('id', req.params.id)
+            .single();
+
+        if (error || !stream) return res.status(404).json({ message: 'Stream not found' });
+        
+        const formatted = formatStreams([stream])[0];
+        res.json(formatted);
+    } catch (e) {
+         res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // POST /api/streams - create a stream
-const createStream = (req, res) => {
+const createStream = async (req, res) => {
     const { title, category, type } = req.body;
     const roomName = `room_${Date.now()}_${req.user.id}`;
     const thumbnail = req.file ? '/uploads/' + req.file.filename : '';
 
-    // Close any existing live stream by this host
-    db.run('UPDATE streams SET is_live = 0 WHERE host_id = ? AND is_live = 1', [req.user.id]);
+    try {
+        // Close any existing live stream by this host
+        await db
+            .from('streams')
+            .update({ is_live: false })
+            .eq('host_id', req.user.id)
+            .eq('is_live', true);
 
-    db.run(
-        'INSERT INTO streams (title, category, type, host_id, is_live, livekit_room, thumbnail) VALUES (?, ?, ?, ?, 1, ?, ?)',
-        [title || 'Untitled Stream', category || 'General', type || 'public', req.user.id, roomName, thumbnail],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            db.get(
-                `SELECT s.*, u.username, u.avatar FROM streams s JOIN users u ON s.host_id = u.id WHERE s.id = ?`,
-                [this.lastID],
-                (err, stream) => res.status(201).json(stream)
-            );
-        }
-    );
+        const { data: newStream, error: insertError } = await db
+            .from('streams')
+            .insert([{
+                title: title || 'Untitled Stream',
+                category: category || 'General',
+                type: type || 'public',
+                host_id: req.user.id,
+                is_live: true,
+                livekit_room: roomName,
+                thumbnail: thumbnail
+            }])
+            .select()
+            .single();
+
+        if (insertError) return res.status(500).json({ message: insertError.message });
+
+        const { data: streamWithUser } = await db
+            .from('streams')
+            .select(`
+                *,
+                users!host_id (username, avatar)
+            `)
+            .eq('id', newStream.id)
+            .single();
+
+        res.status(201).json(formatStreams([streamWithUser])[0]);
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // PUT /api/streams/:id/end - end a stream
-const endStream = (req, res) => {
-    db.run(
-        'UPDATE streams SET is_live = 0 WHERE id = ? AND host_id = ?',
-        [req.params.id, req.user.id],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            if (this.changes === 0) return res.status(403).json({ message: 'Not authorized or stream not found' });
-            res.json({ message: 'Stream ended' });
-        }
-    );
+const endStream = async (req, res) => {
+    try {
+        const { data, error } = await db
+            .from('streams')
+            .update({ is_live: false })
+            .eq('id', req.params.id)
+            .eq('host_id', req.user.id)
+            .select();
+
+        if (error) return res.status(500).json({ message: error.message });
+        if (!data || data.length === 0) return res.status(403).json({ message: 'Not authorized or stream not found' });
+        
+        res.json({ message: 'Stream ended' });
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // POST /api/streams/:id/request - viewer requests to join private/group stream
-const requestJoin = (req, res) => {
+const requestJoin = async (req, res) => {
     const { id: stream_id } = req.params;
     const user_id = req.user.id;
 
-    db.get('SELECT * FROM stream_requests WHERE stream_id = ? AND user_id = ?', [stream_id, user_id], (err, existing) => {
+    try {
+        const { data: existing } = await db
+             .from('stream_requests')
+             .select('status')
+             .eq('stream_id', stream_id)
+             .eq('user_id', user_id)
+             .single();
+
         if (existing) return res.json({ message: 'Request already sent', status: existing.status });
-        db.run(
-            'INSERT INTO stream_requests (stream_id, user_id) VALUES (?, ?)',
-            [stream_id, user_id],
-            function (err) {
-                if (err) return res.status(500).json({ message: err.message });
-                res.status(201).json({ message: 'Join request sent', requestId: this.lastID });
-            }
-        );
-    });
+        
+        const { data: newRequest, error } = await db
+            .from('stream_requests')
+            .insert([{ stream_id, user_id }])
+            .select('id')
+            .single();
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.status(201).json({ message: 'Join request sent', requestId: newRequest.id });
+    } catch (e) {
+         res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // PUT /api/streams/requests/:requestId - host approves or rejects
-const handleRequest = (req, res) => {
+const handleRequest = async (req, res) => {
     const { status } = req.body; // 'approved' or 'rejected'
-    db.run(
-        'UPDATE stream_requests SET status = ? WHERE id = ?',
-        [status, req.params.requestId],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json({ message: `Request ${status}` });
-        }
-    );
+    try {
+        const { error } = await db
+            .from('stream_requests')
+            .update({ status })
+            .eq('id', req.params.requestId);
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json({ message: `Request ${status}` });
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/streams/:id/requests - get join requests for a stream (host only)
-const getRequests = (req, res) => {
-    db.all(
-        `SELECT sr.*, u.username, u.avatar FROM stream_requests sr
-     JOIN users u ON sr.user_id = u.id
-     JOIN streams s ON sr.stream_id = s.id
-     WHERE sr.stream_id = ? AND s.host_id = ? AND sr.status = 'pending'`,
-        [req.params.id, req.user.id],
-        (err, rows) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(rows);
+const getRequests = async (req, res) => {
+    // First we check if host owns stream
+    try {
+         const { data: stream } = await db
+            .from('streams')
+            .select('id')
+            .eq('id', req.params.id)
+            .eq('host_id', req.user.id)
+            .single();
+            
+        if (!stream) {
+            return res.status(403).json({ message: 'Not authorized' });
         }
-    );
+
+        const { data: requests, error } = await db
+            .from('stream_requests')
+            .select(`
+                *,
+                users!user_id (username, avatar)
+            `)
+            .eq('stream_id', req.params.id)
+            .eq('status', 'pending');
+
+        if (error) return res.status(500).json({ message: error.message });
+        
+        const formatted = requests.map(r => ({
+             ...r,
+             username: r.users?.username,
+             avatar: r.users?.avatar,
+             users: undefined
+        }));
+
+        res.json(formatted);
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 module.exports = {

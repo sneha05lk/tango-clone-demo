@@ -1,24 +1,47 @@
 const { db } = require('../config/db');
 
 // GET /api/users/profile/:id
-const getProfile = (req, res) => {
+const getProfile = async (req, res) => {
     const userId = req.params.id;
-    db.get(
-        `SELECT id, username, avatar, bio, coin_balance, created_at,
-         (SELECT COUNT(*) FROM followers WHERE following_id = ?) as followers_count,
-         (SELECT COUNT(*) FROM followers WHERE follower_id = ?) as following_count,
-         (SELECT SUM(amount) FROM transactions WHERE receiver_id = ? AND type = 'gift') as earned_coins
-         FROM users WHERE id = ?`,
-        [userId, userId, userId, userId],
-        (err, user) => {
-            if (err || !user) return res.status(404).json({ message: 'User not found' });
-            res.json(user);
+    try {
+        const { data: user, error: errUser } = await db
+            .from('users')
+            .select('id, username, avatar, bio, coin_balance, created_at')
+            .eq('id', userId)
+            .single();
+
+        if (errUser || !user) return res.status(404).json({ message: 'User not found' });
+
+        const { count: followers_count } = await db
+            .from('followers')
+            .select('*', { count: 'exact', head: true })
+            .eq('following_id', userId);
+
+        const { count: following_count } = await db
+            .from('followers')
+            .select('*', { count: 'exact', head: true })
+            .eq('follower_id', userId);
+
+        // Sum earned coins
+        const { data: txs } = await db
+            .from('transactions')
+            .select('amount')
+            .eq('receiver_id', userId)
+            .eq('type', 'gift');
+            
+        let earned_coins = 0;
+        if (txs) {
+            earned_coins = txs.reduce((sum, tx) => sum + tx.amount, 0);
         }
-    );
+
+        res.json({ ...user, followers_count: followers_count || 0, following_count: following_count || 0, earned_coins });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // PUT /api/users/profile
-const updateProfile = (req, res) => {
+const updateProfile = async (req, res) => {
     const { username, bio } = req.body;
     const userId = req.user.id;
 
@@ -26,23 +49,26 @@ const updateProfile = (req, res) => {
         return res.status(400).json({ message: 'Username must be at least 3 characters' });
     }
 
-    db.run(
-        'UPDATE users SET username = ?, bio = ? WHERE id = ?',
-        [username.trim(), bio, userId],
-        function (err) {
-            if (err) {
-                if (err.message.includes('UNIQUE constraint failed: users.username')) {
-                    return res.status(400).json({ message: 'Username already taken' });
-                }
-                return res.status(500).json({ message: err.message });
+    try {
+        const { error } = await db
+            .from('users')
+            .update({ username: username.trim(), bio })
+            .eq('id', userId);
+
+        if (error) {
+            if (error.code === '23505') { // Unique violation Postgres code
+                return res.status(400).json({ message: 'Username already taken' });
             }
-            res.json({ message: 'Profile updated successfully' });
+            return res.status(500).json({ message: error.message });
         }
-    );
+        res.json({ message: 'Profile updated successfully' });
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // POST /api/users/follow/:id
-const followUser = (req, res) => {
+const followUser = async (req, res) => {
     const followerId = req.user.id;
     const followingId = req.params.id;
 
@@ -50,109 +76,150 @@ const followUser = (req, res) => {
         return res.status(400).json({ message: 'You cannot follow yourself' });
     }
 
-    db.run(
-        'INSERT OR IGNORE INTO followers (follower_id, following_id) VALUES (?, ?)',
-        [followerId, followingId],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json({ message: 'Followed successfully' });
+    try {
+        const { error } = await db
+            .from('followers')
+            .insert([{ follower_id: followerId, following_id: followingId }]);
+            
+        // Ignore duplicate insert errors (code 23505)
+        if (error && error.code !== '23505') {
+             return res.status(500).json({ message: error.message });
         }
-    );
+        res.json({ message: 'Followed successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // DELETE /api/users/follow/:id
-const unfollowUser = (req, res) => {
+const unfollowUser = async (req, res) => {
     const followerId = req.user.id;
     const followingId = req.params.id;
 
-    db.run(
-        'DELETE FROM followers WHERE follower_id = ? AND following_id = ?',
-        [followerId, followingId],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json({ message: 'Unfollowed successfully' });
-        }
-    );
+    try {
+        const { error } = await db
+            .from('followers')
+            .delete()
+            .eq('follower_id', followerId)
+            .eq('following_id', followingId);
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json({ message: 'Unfollowed successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/users/follow-status/:id
-const getFollowStatus = (req, res) => {
+const getFollowStatus = async (req, res) => {
     const followerId = req.user.id;
     const followingId = req.params.id;
 
-    db.get(
-        'SELECT 1 FROM followers WHERE follower_id = ? AND following_id = ?',
-        [followerId, followingId],
-        (err, row) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json({ isFollowing: !!row });
+    try {
+        const { data, error } = await db
+            .from('followers')
+            .select('follower_id')
+            .eq('follower_id', followerId)
+            .eq('following_id', followingId)
+            .limit(1)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { // not found code
+             return res.status(500).json({ message: error.message });
         }
-    );
+        
+        res.json({ isFollowing: !!data });
+    } catch (e) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/users/search?q=query
-const searchUsers = (req, res) => {
+const searchUsers = async (req, res) => {
     const query = req.query.q;
     if (!query) return res.json([]);
 
-    db.all(
-        'SELECT id, username, avatar FROM users WHERE username LIKE ? LIMIT 10',
-        [`%${query}%`],
-        (err, users) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(users);
-        }
-    );
+    try {
+        const { data: users, error } = await db
+            .from('users')
+            .select('id, username, avatar')
+            .ilike('username', `%${query}%`)
+            .limit(10);
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json(users);
+    } catch (error) {
+         res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/users/:id/followers
-const getFollowers = (req, res) => {
+const getFollowers = async (req, res) => {
     const userId = req.params.id;
-    db.all(
-        `SELECT u.id, u.username, u.avatar 
-         FROM users u 
-         JOIN followers f ON f.follower_id = u.id 
-         WHERE f.following_id = ?`,
-        [userId],
-        (err, users) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(users);
-        }
-    );
+    try {
+         const { data, error } = await db
+            .from('followers')
+            .select(`
+               users!follower_id (
+                  id,
+                  username,
+                  avatar
+               )
+            `)
+            .eq('following_id', userId);
+
+        if (error) return res.status(500).json({ message: error.message });
+        
+        const mappedUsers = data.map(f => f.users);
+        res.json(mappedUsers);
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // GET /api/users/:id/following
-const getFollowing = (req, res) => {
+const getFollowing = async (req, res) => {
     const userId = req.params.id;
-    db.all(
-        `SELECT u.id, u.username, u.avatar 
-         FROM users u 
-         JOIN followers f ON f.following_id = u.id 
-         WHERE f.follower_id = ?`,
-        [userId],
-        (err, users) => {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json(users);
-        }
-    );
+    try {
+        const { data, error } = await db
+            .from('followers')
+            .select(`
+               users!following_id (
+                  id,
+                  username,
+                  avatar
+               )
+            `)
+            .eq('follower_id', userId);
+
+        if (error) return res.status(500).json({ message: error.message });
+        
+        const mappedUsers = data.map(f => f.users);
+        res.json(mappedUsers);
+    } catch (error) {
+         res.status(500).json({ message: 'Server error' });
+    }
 };
 
 // POST /api/users/profile/avatar
-const updateAvatar = (req, res) => {
+const updateAvatar = async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
     
     // Path relative to 'client' folder for frontend access
     const avatarPath = '/uploads/' + req.file.filename;
     const userId = req.user.id;
 
-    db.run(
-        'UPDATE users SET avatar = ? WHERE id = ?',
-        [avatarPath, userId],
-        function (err) {
-            if (err) return res.status(500).json({ message: err.message });
-            res.json({ message: 'Avatar updated successfully', avatar: avatarPath });
-        }
-    );
+    try {
+        const { error } = await db
+            .from('users')
+            .update({ avatar: avatarPath })
+            .eq('id', userId);
+
+        if (error) return res.status(500).json({ message: error.message });
+        res.json({ message: 'Avatar updated successfully', avatar: avatarPath });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 module.exports = {

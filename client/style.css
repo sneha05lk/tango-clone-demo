@@ -447,9 +447,19 @@ body::before {
   transition: all 0.4s ease;
 }
 
-.video-area.grid-2 { grid-template-columns: 1fr 1fr; }
-.video-area.grid-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.video-area.grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.video-area.grid-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.video-area.grid-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.video-area.grid-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
 
 .live-video {
   width: 100%;
@@ -472,7 +482,7 @@ body::before {
   position: absolute;
   bottom: 10px;
   left: 10px;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
   color: #fff;
   padding: 4px 10px;
@@ -480,7 +490,7 @@ body::before {
   font-size: 0.75rem;
   font-weight: 600;
   z-index: 5;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .kick-btn-overlay {
@@ -693,8 +703,15 @@ body::before {
 }
 
 @keyframes chatFadeIn {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .chat-avatar {
@@ -727,7 +744,7 @@ body::before {
 .chat-msg-text {
   font-size: 0.9rem;
   line-height: 1.3;
-  color: rgba(255,255,255,0.95);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .chat-input-row {
@@ -1460,6 +1477,7 @@ select option {
 .hidden {
   display: none !important;
 }
+
 /* --- AUDIO UNLOCK OVERLAY -------------------------------------- */
 .audio-unlock-overlay {
   position: absolute;
@@ -1517,9 +1535,17 @@ select option {
 }
 
 @keyframes fadeInPrompt {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
+
 /* ─── NEW FEATURES STYLES ───────────────────────────────────────── */
 .search-bar-wrap {
   position: relative;
@@ -1629,8 +1655,15 @@ textarea#edit-bio:focus {
 
 /* Animations */
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(15px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .profile-header-alt {
@@ -1653,7 +1686,8 @@ textarea#edit-bio:focus {
   width: 100px;
   height: 100px;
   border-radius: 50%;
-  background: var(--bg-dark); /* Base color in case image is dark */
+  background: var(--bg-dark);
+  /* Base color in case image is dark */
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   margin: 0 auto;
   display: flex;
@@ -1779,7 +1813,7 @@ textarea#edit-bio:focus {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .hud-ctrl-btn:hover {
@@ -1825,7 +1859,7 @@ textarea#edit-bio:focus {
 .video-placeholder p {
   font-size: 1.1rem;
   font-weight: 600;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* ─── AUDIO UNLOCK OVERLAY ───────────────────────────────────────── */
@@ -1862,8 +1896,15 @@ textarea#edit-bio:focus {
 }
 
 @keyframes promptPop {
-  0% { transform: scale(0.8); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .prompt-icon-ring {
@@ -1880,9 +1921,17 @@ textarea#edit-bio:focus {
 }
 
 @keyframes iconPulse {
-  0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
-  70% { box-shadow: 0 0 0 15px rgba(168, 85, 247, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4);
+  }
+
+  70% {
+    box-shadow: 0 0 0 15px rgba(168, 85, 247, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+  }
 }
 
 .prompt-icon-large {
@@ -1950,7 +1999,7 @@ textarea#edit-bio:focus {
   border: 4px solid var(--glass-border);
   background-size: cover;
   background-position: center;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
 /* ─── UTILITY BUTTONS ───────────────────────────────────────────── */
@@ -1966,6 +2015,7 @@ textarea#edit-bio:focus {
   transition: var(--transition);
   box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
 }
+
 .btn-success:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
@@ -1983,6 +2033,7 @@ textarea#edit-bio:focus {
   transition: var(--transition);
   box-shadow: 0 4px 15px rgba(239, 68, 68, 0.35);
 }
+
 .btn-danger:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
@@ -1990,7 +2041,7 @@ textarea#edit-bio:focus {
 
 .btn-ghost {
   padding: 10px 20px;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   border: 1px solid var(--glass-border);
   border-radius: 50px;
@@ -1999,8 +2050,9 @@ textarea#edit-bio:focus {
   cursor: pointer;
   transition: var(--transition);
 }
+
 .btn-ghost:hover {
-  background: rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.12);
   transform: translateY(-1px);
 }
 
@@ -2014,7 +2066,9 @@ textarea#edit-bio:focus {
   transition: var(--transition);
 }
 
-.w-full { width: 100%; }
+.w-full {
+  width: 100%;
+}
 
 /* ─── JOIN / INVITE TOAST ────────────────────────────────────────── */
 .join-toast {
@@ -2029,11 +2083,20 @@ textarea#edit-bio:focus {
 }
 
 @keyframes slideDown {
-  from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
-.join-toast.hidden { display: none; }
+.join-toast.hidden {
+  display: none;
+}
 
 .join-toast-inner {
   padding: 14px 18px;

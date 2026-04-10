@@ -6,7 +6,7 @@ const generateToken = (id) =>
     jwt.sign({ id }, process.env.JWT_SECRET || 'tangolive_secret_key', { expiresIn: '30d' });
 
 // POST /api/auth/register
-const register = (req, res) => {
+const register = async (req, res) => {
     let { username, email, password } = req.body;
     if (!username || !email || !password)
         return res.status(400).json({ message: 'All fields are required' });
@@ -14,35 +14,54 @@ const register = (req, res) => {
     username = username.trim();
     email = email.trim().toLowerCase();
 
-    db.get('SELECT id FROM users WHERE email = ? OR username = ?', [email, username], async (err, existing) => {
-        if (existing) return res.status(400).json({ message: 'Username or email already taken' });
+    try {
+        const { data: existing, error: errExisting } = await db
+            .from('users')
+            .select('id')
+            .or(`email.eq.${email},username.eq.${username}`)
+            .limit(1)
+            .single();
 
+        if (existing) return res.status(400).json({ message: 'Username or email already taken' });
+        
         const hash = await bcrypt.hash(password, 10);
-        db.run(
-            'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-            [username, email, hash],
-            function (err) {
-                if (err) return res.status(500).json({ message: err.message });
-                const token = generateToken(this.lastID);
-                res.status(201).json({
-                    id: this.lastID, username, email,
-                    coin_balance: 1000, role: 'user', token
-                });
-            }
-        );
-    });
+        
+        const { data: newUser, error: insertError } = await db
+            .from('users')
+            .insert([{ username, email, password: hash }])
+            .select('id, username, email, coin_balance, role')
+            .single();
+
+        if (insertError) return res.status(500).json({ message: insertError.message });
+
+        const token = generateToken(newUser.id);
+        res.status(201).json({
+            id: newUser.id, username: newUser.username, email: newUser.email,
+            coin_balance: newUser.coin_balance, role: newUser.role, token
+        });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error: ' + error.message });
+    }
 };
 
 // POST /api/auth/login
-const login = (req, res) => {
+const login = async (req, res) => {
     let { email, password } = req.body;
     if (!email || !password)
         return res.status(400).json({ message: 'All fields are required' });
         
     email = email.trim().toLowerCase();
     
-    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
-        if (err || !user) return res.status(401).json({ message: 'Invalid email or password' });
+    try {
+        const { data: user, error: errUser } = await db
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .limit(1)
+            .single();
+
+        if (errUser || !user) return res.status(401).json({ message: 'Invalid email or password' });
+        
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ message: 'Invalid email or password' });
 
@@ -52,23 +71,39 @@ const login = (req, res) => {
             coin_balance: user.coin_balance, role: user.role,
             avatar: user.avatar, token
         });
-    });
+    } catch (error) {
+         res.status(500).json({ message: 'Server error: ' + error.message });
+    }
 };
 
 // GET /api/auth/me
-const getMe = (req, res) => {
-    db.get(
-        `SELECT u.id, u.username, u.email, u.coin_balance, u.role, u.avatar, u.created_at,
-         (SELECT COUNT(*) FROM streams WHERE host_id = u.id) as total_streams,
-         (SELECT COUNT(*) FROM followers WHERE following_id = u.id) as followers
-         FROM users u WHERE u.id = ?`,
+const getMe = async (req, res) => {
+    try {
+        const { data: user, error } = await db
+            .from('users')
+            .select('id, username, email, coin_balance, role, avatar, created_at')
+            .eq('id', req.user.id)
+            .limit(1)
+            .single();
 
-        [req.user.id],
-        (err, user) => {
-            if (err || !user) return res.status(404).json({ message: 'User not found' });
-            res.json(user);
-        }
-    );
+        if (error || !user) return res.status(404).json({ message: 'User not found' });
+
+        // Get stream count
+        const { count: total_streams } = await db
+            .from('streams')
+            .select('*', { count: 'exact', head: true })
+            .eq('host_id', req.user.id);
+            
+        // Get followers count
+        const { count: followers } = await db
+            .from('followers')
+            .select('*', { count: 'exact', head: true })
+            .eq('following_id', req.user.id);
+
+        res.json({ ...user, total_streams, followers });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 module.exports = { register, login, getMe };

@@ -7,21 +7,25 @@ const rooms = {};
 
 module.exports = (io) => {
     // Socket authentication middleware
-    io.use((socket, next) => {
+    io.use(async (socket, next) => {
         const token = socket.handshake.auth?.token;
         if (token) {
             try {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolive_secret_key');
-                db.get('SELECT id, username, avatar, coin_balance, is_banned FROM users WHERE id = ?', [decoded.id], (err, user) => {
-                    if (err || !user) {
-                        socket.user = null;
-                    } else if (user.is_banned) {
-                        return next(new Error('Your account has been banned.'));
-                    } else {
-                        socket.user = user;
-                    }
-                    next();
-                });
+                const { data: user, error } = await db
+                     .from('users')
+                     .select('id, username, avatar, coin_balance, is_banned')
+                     .eq('id', decoded.id)
+                     .single();
+
+                if (error || !user) {
+                    socket.user = null;
+                } else if (user.is_banned) {
+                    return next(new Error('Your account has been banned.'));
+                } else {
+                    socket.user = user;
+                }
+                next();
             } catch {
                 socket.user = null;
                 next();
@@ -47,7 +51,11 @@ module.exports = (io) => {
 
             const viewerCount = rooms[roomName].size;
             // Update DB viewer count
-            db.run('UPDATE streams SET viewer_count = ? WHERE livekit_room = ?', [viewerCount, roomName]);
+            db.from('streams')
+              .update({ viewer_count: viewerCount })
+              .eq('livekit_room', roomName)
+              .then(); // background
+
             // Notify room
             io.to(roomName).emit('viewer-count', { count: viewerCount });
             socket.to(roomName).emit('user-joined', { username });
@@ -55,7 +63,7 @@ module.exports = (io) => {
         });
 
         // ── DIRECT MESSAGES ──────────────────────────────────────────────
-        socket.on('direct-message', ({ receiverId, message }) => {
+        socket.on('direct-message', async ({ receiverId, message }) => {
             if (!socket.user) return;
             const msgData = {
                 id: Date.now(),
@@ -66,22 +74,22 @@ module.exports = (io) => {
             };
 
             // Save to DB
-            db.run(
-                'INSERT INTO messages (sender_id, receiver_id, message) VALUES (?, ?, ?)',
-                [socket.user.id, receiverId, message],
-                function (err) {
-                    if (err) return;
-                    msgData.id = this.lastID;
+            const { data, error } = await db
+                 .from('messages')
+                 .insert([{ sender_id: socket.user.id, receiver_id: receiverId, message }])
+                 .select('id')
+                 .single();
 
-                    // Send to receiver if online
-                    const targetSocket = onlineUsers[receiverId];
-                    if (targetSocket) {
-                        io.to(targetSocket).emit('direct-message', msgData);
-                    }
-                    // Send back to sender for sync
-                    socket.emit('direct-message', msgData);
-                }
-            );
+            if (error) return;
+            msgData.id = data.id;
+
+            // Send to receiver if online
+            const targetSocket = onlineUsers[receiverId];
+            if (targetSocket) {
+                io.to(targetSocket).emit('direct-message', msgData);
+            }
+            // Send back to sender for sync
+            socket.emit('direct-message', msgData);
         });
 
         // ── LEAVE STREAM ROOM ────────────────────────────────────────────
@@ -122,7 +130,10 @@ module.exports = (io) => {
         socket.on('end-stream', ({ roomName }) => {
             io.to(roomName).emit('stream-ended', { message: 'The host has ended the stream.' });
             // Mark as offline in DB
-            db.run('UPDATE streams SET is_live = 0 WHERE livekit_room = ?', [roomName]);
+            db.from('streams')
+              .update({ is_live: false })
+              .eq('livekit_room', roomName)
+              .then(); // background
         });
 
         // ── JOIN REQUEST FLOW (private/group) ─────────────────────────────
@@ -211,7 +222,11 @@ function handleLeave(socket, roomName, io) {
     if (rooms[roomName]) {
         rooms[roomName].delete(socket.id);
         const viewerCount = rooms[roomName].size;
-        db.run('UPDATE streams SET viewer_count = ? WHERE livekit_room = ?', [viewerCount, roomName]);
+        db.from('streams')
+          .update({ viewer_count: viewerCount })
+          .eq('livekit_room', roomName)
+          .then(); // run in background
+          
         io.to(roomName).emit('viewer-count', { count: viewerCount });
     }
 }
