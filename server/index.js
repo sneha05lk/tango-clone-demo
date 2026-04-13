@@ -1,4 +1,4 @@
-require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -7,6 +7,7 @@ const path = require('path');
 const { initDB } = require('./config/db');
 const socketHandler = require('./socketServer');
 const { errorHandler, notFound } = require('./middlewares/errorMiddleware');
+const { getAllowedOrigins, isOriginAllowed, getRequiredEnv } = require('./config/security');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -19,16 +20,26 @@ const messageRoutes = require('./routes/messages');
 const userRoutes = require('./routes/users');
 
 const app = express();
+const allowedOrigins = getAllowedOrigins();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: '*',
+        origin: (origin, callback) => {
+            if (isOriginAllowed(origin, allowedOrigins)) return callback(null, true);
+            return callback(new Error('CORS blocked for this origin'));
+        },
         methods: ['GET', 'POST', 'PUT', 'DELETE'],
     },
 });
 
   // Middleware
-  app.use(cors());
+  app.use(cors({
+      origin: (origin, callback) => {
+          if (isOriginAllowed(origin, allowedOrigins)) return callback(null, true);
+          return callback(new Error('CORS blocked for this origin'));
+      },
+      credentials: true,
+  }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.set('io', io);
@@ -52,7 +63,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().t
 // Public config for frontend
 app.get('/api/config', (req, res) => {
     res.json({
-        livekitUrl: process.env.LIVEKIT_URL || 'wss://your-livekit-url.livekit.cloud'
+        livekitUrl: process.env.LIVEKIT_URL || null
     });
 });
 
@@ -71,6 +82,7 @@ socketHandler(io);
 
 // Initialize DB then start server
 const PORT = process.env.PORT || 3000;
+getRequiredEnv('JWT_SECRET');
 initDB();
 
 server.on('error', (e) => {

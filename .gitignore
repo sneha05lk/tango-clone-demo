@@ -28,3 +28,4 @@ Thumbs.db
 .gemini/
 migrate_db.js
 seed_chat.js
+client/uploads/

@@ -20,6 +20,12 @@ let isGuestStreamer = false;
 let activeGuestIds = new Set(); // To track UI elements for guests
 let isMutedByViewer = false; // Viewer-side global mute state
 let cachedLivekitUrl = null;
+let currentScreen = 'home'; // Tracking the active screen state
+let livekitConnectSeq = 0;
+let lastManualLivekitDisconnectAt = 0;
+let isGoLiveInProgress = false;
+let isGiftSending = false;
+let homeRefreshTimer = null;
 
 
 // ─── UTILITY ─────────────────────────────────────────────────────────
@@ -132,9 +138,13 @@ function initSocket() {
         socket.on(`join-response-${currentUser.id}`, ({ approved, roomName }) => {
             $('joinreq-status').textContent = approved ? '✅ Approved! Joining...' : '❌ Host denied your request.';
             if (approved && currentStream) {
-                setTimeout(() => {
+                setTimeout(async () => {
                     closeModal('joinreq-modal');
-                    enterLiveScreen(currentStream);
+                    try {
+                        await enterLiveScreen(currentStream);
+                    } catch (err) {
+                        console.error('Failed to enter approved stream:', err);
+                    }
                 }, 1000);
             }
         });
@@ -263,8 +273,24 @@ function debounce(fn, delay) {
     };
 }
 
+async function retryAsync(task, { retries = 2, delayMs = 500, shouldRetry } = {}) {
+    let lastError;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await task(attempt);
+        } catch (err) {
+            lastError = err;
+            const retryable = shouldRetry ? shouldRetry(err) : true;
+            if (!retryable || attempt === retries) break;
+            await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+        }
+    }
+    throw lastError;
+}
+
 // ─── NAV ──────────────────────────────────────────────────────────────
 function navigateTo(screenName) {
+    currentScreen = screenName;
     if (screenName === 'golive' && !currentUser) {
         showAuthOverlay('login');
         return;
@@ -299,6 +325,18 @@ function navigateTo(screenName) {
     if (screenName === 'wallet') loadWallet();
     if (screenName === 'profile') renderProfile();
     if (screenName === 'chat') renderChatList();
+    if (screenName === 'home') loadStreams(document.querySelector('.cat-pill.active')?.dataset.cat || 'all');
+    if (screenName === 'home') {
+        if (homeRefreshTimer) clearInterval(homeRefreshTimer);
+        homeRefreshTimer = setInterval(() => {
+            if (currentScreen === 'home') {
+                loadStreams(document.querySelector('.cat-pill.active')?.dataset.cat || 'all');
+            }
+        }, 10000);
+    } else if (homeRefreshTimer) {
+        clearInterval(homeRefreshTimer);
+        homeRefreshTimer = null;
+    }
     if (screenName !== 'chat-thread') chatPartnerId = null;
     if (screenName !== 'view-profile' && screenName !== 'follow-list') {
         viewProfileUserId = null;
@@ -535,7 +573,7 @@ async function openStream(streamId) {
             return;
         }
 
-        enterLiveScreen(stream);
+        await enterLiveScreen(stream);
 
         // Start guest timer if not logged in
         if (!currentUser) startGuestTimer();
@@ -544,9 +582,12 @@ async function openStream(streamId) {
     }
 }
 
-function enterLiveScreen(stream) {
+async function enterLiveScreen(stream, existingToken = null) {
+    currentScreen = 'live';
     currentStream = stream;
-    stopCamera(); // Ensure preview camera is released
+    if (!shouldPublishLocalTracks()) {
+        stopCamera(); // viewers do not need local preview stream
+    }
     
     // NEW: Reset co-streaming states for the new session
     activeGuestIds.clear();
@@ -595,7 +636,8 @@ function enterLiveScreen(stream) {
     }
 
     // Clear chat
-    $('chat-messages').innerHTML = '';
+    const chatBox = $('chat-messages');
+    if (chatBox) chatBox.innerHTML = '';
 
     // Switch screen
     document.querySelectorAll('.screen').forEach(s => { s.classList.remove('active'); s.classList.add('hidden'); });
@@ -624,25 +666,55 @@ function enterLiveScreen(stream) {
         localWrapper.appendChild(localVid);
         localWrapper.appendChild(badge);
         videoArea.insertBefore(localWrapper, videoArea.firstChild);
+        // Show immediate preview while LiveKit connection initializes.
+        if (mediaStream) {
+            localVid.srcObject = mediaStream;
+            localVid.classList.remove('hidden');
+            localVid.play().catch(() => {});
+        }
         // Note: We don't add '__local__' to activeGuestIds anymore. 
         // updateVideoGrid() handles the local user separately.
         updateVideoGrid();
     }
 
-    // Fetch LiveKit token and connect (now allowing guests!)
-    apiReq('POST', '/api/livekit/token', {
-        room: stream.livekit_room,
-        identity: currentUser ? currentUser.username : null, // Controller will fallback for guest
-        canPublish: isHost
-    }).then(data => {
-        connectToLiveKit(data.token, stream.livekit_room);
-    }).catch(err => {
-        console.error('Failed to get LiveKit token:', err);
-        // If guest, show a login hint?
+    // Fetch LiveKit token and connect (unless token is already provided)
+    try {
+        const livekitToken = existingToken || (await retryAsync(async () => {
+            const tk = await apiReq('POST', '/api/livekit/token', {
+                room: stream.livekit_room,
+                identity: currentUser ? currentUser.username : null,
+                canPublish: shouldPublishLocalTracks()
+            });
+            if (!tk?.token) throw new Error('LiveKit token was empty');
+            return tk;
+        }, {
+            retries: 2,
+            delayMs: 700,
+            shouldRetry: (err) => !String(err?.message || '').includes('Not authorized'),
+        })).token;
+
+        await retryAsync(
+            async () => connectToLiveKit(livekitToken, stream.livekit_room),
+            {
+                retries: 1,
+                delayMs: 800,
+                shouldRetry: (err) => {
+                    const msg = String(err?.message || '');
+                    return !msg.includes('Client initiated disconnect');
+                },
+            }
+        );
+    } catch (err) {
+        console.error('Failed to initialize LiveKit:', err);
+        const overlay = $('connection-overlay');
+        if (overlay) {
+            overlay.classList.remove('hidden');
+            overlay.innerHTML = `<p class="error-msg">Failed to connect: ${err.message}</p>`;
+        }
         if (!currentUser) {
             appendChat('System', 'You are watching as a guest. Log in to chat and send gifts!', true);
         }
-    });
+    }
 
     // Load gifts
     loadGifts();
@@ -695,8 +767,84 @@ function joinRoom(roomName) {
 }
 
 // ─── LIVEKIT INTEGRATION ──────────────────────────────────────────────
+function shouldPublishLocalTracks() {
+    return isHost || isGuestStreamer;
+}
+
+function markManualLivekitDisconnect() {
+    lastManualLivekitDisconnectAt = Date.now();
+}
+
+function clearAudioElements() {
+    document.querySelectorAll('audio[id^="audio-track-"]').forEach((el) => el.remove());
+}
+
+function normalizeLivekitUrl(rawUrl) {
+    const url = (rawUrl || '').trim();
+    if (!url) throw new Error('LiveKit URL is missing');
+    if (!url.startsWith('wss://')) {
+        throw new Error('Invalid LiveKit URL. Expected a secure wss:// URL');
+    }
+    return url;
+}
+
+async function getLivekitUrl() {
+    if (cachedLivekitUrl) return normalizeLivekitUrl(cachedLivekitUrl);
+    const config = await apiReq('GET', '/api/config');
+    cachedLivekitUrl = normalizeLivekitUrl(config.livekitUrl);
+    return cachedLivekitUrl;
+}
+
+async function attachLocalVideo(track) {
+    const localVideo = $('local-video');
+    if (!localVideo || !track) return;
+    track.detach(localVideo);
+    track.attach(localVideo);
+    localVideo.classList.remove('hidden');
+    try {
+        await localVideo.play();
+    } catch (e) {
+        console.warn('Local video play() wait warning:', e);
+    }
+}
+
+async function syncHostControlButtons() {
+    if (!shouldPublishLocalTracks() || !livekitRoom?.localParticipant) return;
+    const micBtn = $('hud-mic-btn');
+    const camBtn = $('hud-cam-btn');
+    const micEnabled = livekitRoom.localParticipant.isMicrophoneEnabled;
+    const camEnabled = livekitRoom.localParticipant.isCameraEnabled;
+    if (micBtn) {
+        micBtn.classList.toggle('muted', !micEnabled);
+        micBtn.textContent = micEnabled ? '🎤' : '🔇';
+    }
+    if (camBtn) {
+        camBtn.classList.toggle('muted', !camEnabled);
+        camBtn.textContent = camEnabled ? '📷' : '🚫';
+    }
+}
+
+async function ensureLocalMediaPublished() {
+    await livekitRoom.localParticipant.setMicrophoneEnabled(true);
+    await livekitRoom.localParticipant.setCameraEnabled(true);
+    const videoPub = Array.from(livekitRoom.localParticipant.videoTrackPublications.values())[0];
+    if (videoPub?.track) {
+        await attachLocalVideo(videoPub.track);
+    }
+    await syncHostControlButtons();
+}
+
 async function connectToLiveKit(token, roomName) {
-    if (livekitRoom) await livekitRoom.disconnect();
+    const connectSeq = ++livekitConnectSeq;
+    if (livekitRoom) {
+        try {
+            markManualLivekitDisconnect();
+            await livekitRoom.disconnect();
+        } catch (disconnectErr) {
+            console.warn('Previous LiveKit disconnect warning:', disconnectErr);
+        }
+    }
+    clearAudioElements();
 
     livekitRoom = new LivekitClient.Room({
         adaptiveStream: true,
@@ -717,72 +865,78 @@ async function connectToLiveKit(token, roomName) {
         .on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, handleAudioPlaybackStatus)
         .on(LivekitClient.RoomEvent.TrackMuted, (pub, part) => handleTrackMuteChange(pub, part, true))
         .on(LivekitClient.RoomEvent.TrackUnmuted, (pub, part) => handleTrackMuteChange(pub, part, false))
+        .on(LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+            removeGuestVideo(participant.identity);
+        })
         .on(LivekitClient.RoomEvent.Disconnected, () => {
-            console.log('Disconnected from LiveKit');
+            const isManual = Date.now() - lastManualLivekitDisconnectAt < 4000;
+            if (isManual) {
+                console.log('[LiveKit] Disconnected (manual/reconnect)');
+            } else {
+                console.warn('[LiveKit] Disconnected unexpectedly');
+            }
+            clearAudioElements();
         });
 
-    try {
-        const livekitUrl = cachedLivekitUrl || (await apiReq('GET', '/api/config')).livekitUrl;
-        cachedLivekitUrl = livekitUrl;
-        
-        await livekitRoom.connect(livekitUrl, token);
-        console.log('Connected to LiveKit room:', roomName);
-        
-        // Hide connection overlay after successful connect
-        const connOverlay = $('connection-overlay');
-        if (connOverlay) connOverlay.classList.add('hidden');
+    // Show connection overlay at start of connect attempt
+    const connOverlay = $('connection-overlay');
+    if (connOverlay) {
+        connOverlay.classList.remove('hidden');
+        connOverlay.innerHTML = '<div class="spinner"></div><p>Connecting to stream...</p>';
+    }
 
-        // Check if audio is already blocked at start
-        if (!isHost && !livekitRoom.canPlaybackAudio) {
+    try {
+        const livekitUrl = await getLivekitUrl();
+
+        await livekitRoom.connect(livekitUrl, token);
+        if (connectSeq !== livekitConnectSeq) {
+            await livekitRoom.disconnect();
+            return;
+        }
+        console.log('[LiveKit] Connected to room:', roomName);
+
+        if (shouldPublishLocalTracks()) {
+            await ensureLocalMediaPublished();
+            console.log('[LiveKit] Local media enabled and published');
+        }
+
+        if (!shouldPublishLocalTracks() && !livekitRoom.canPlaybackAudio) {
             console.warn('Audio blocked immediately on connect. Showing prompt.');
             showAudioPrompt();
         }
-        
-        // Try to start audio immediately since the user just clicked a stream card (user gesture)
-        if (!isHost) {
-            livekitRoom.startAudio().catch(e => console.warn('Early startAudio failed:', e));
-        }
 
-        if (isHost) {
-            // Stop existing preview to free up camera/mic Device for LiveKit
-            stopCamera();
-            
-            // Publish local tracks
-            const tracks = await LivekitClient.createLocalTracks({
-                audio: true,
-                video: { 
-                    resolution: LivekitClient.VideoPresets.h720.resolution,
-                    encoding: LivekitClient.VideoPresets.h720.encoding
-                },
+        if (!shouldPublishLocalTracks()) {
+            await livekitRoom.startAudio().catch((e) => {
+                console.warn('Early startAudio failed:', e);
             });
-            for (const track of tracks) {
-                await livekitRoom.localParticipant.publishTrack(track);
-                console.log(`[Host] Local ${track.kind} track published`);
-                if (track.kind === 'video') {
-                   const localVideo = $('local-video');
-                   if (localVideo) {
-                       localVideo.classList.remove('hidden');
-                       track.attach(localVideo);
-                   }
-                }
-            }
-            console.log('Host tracks active and publishing');
-        } else {
-            // If viewer, handle participants who are already in the room
-            // Give it a tiny delay to ensure tracks are ready
-            setTimeout(() => {
-                livekitRoom.remoteParticipants.forEach(participant => {
-                    participant.trackPublications.forEach(publication => {
-                        if (publication.track) {
-                            handleTrackSubscribed(publication.track, publication, participant);
-                        }
-                    });
+            livekitRoom.remoteParticipants.forEach((participant) => {
+                participant.trackPublications.forEach((publication) => {
+                    if (publication.track) {
+                        handleTrackSubscribed(publication.track, publication, participant);
+                    }
                 });
-            }, 500);
+            });
         }
+        if (connOverlay) connOverlay.classList.add('hidden');
     } catch (error) {
-        console.error('Failed to connect to LiveKit:', error);
-        alert('Video connection failed. Please check your LiveKit configuration.');
+        const errorMsg = String(error?.message || '');
+        const isExpectedDisconnect =
+            connectSeq !== livekitConnectSeq ||
+            errorMsg.includes('Client initiated disconnect') ||
+            errorMsg.includes('user initiated disconnect');
+        if (isExpectedDisconnect) {
+            console.warn('[LiveKit] Connect attempt cancelled by a newer request.');
+            return;
+        }
+        console.error('[LiveKit] Failed to connect:', error);
+        const overlay = $('connection-overlay');
+        if (overlay) {
+            overlay.classList.remove('hidden');
+            overlay.innerHTML = `
+                <p class="error-msg" style="background:none;">Video connection failed. Please check LiveKit configuration.</p>
+                <button class="btn-primary btn-sm" onclick="location.reload()">Retry Connection</button>
+            `;
+        }
     }
 }
 
@@ -797,11 +951,16 @@ function handleTrackSubscribed(track, publication, participant) {
     } else if (track.kind === 'audio') {
         const audioId = `audio-track-${participant.identity}`;
         let existing = $(audioId);
-        if (existing) existing.remove();
+        if (existing) {
+            existing.pause();
+            existing.remove();
+        }
 
         const el = track.attach();
         el.id = audioId;
         el.muted = isMutedByViewer;
+        el.autoplay = true;
+        el.playsInline = true;
         document.body.appendChild(el); 
         if (!isMutedByViewer) {
             el.play().catch(e => {
@@ -814,6 +973,10 @@ function handleTrackSubscribed(track, publication, participant) {
 }
 
 function renderParticipantVideo(participant, track) {
+    // Failsafe: Hide connection overlay whenever a video is rendered
+    const connOverlay = $('connection-overlay');
+    if (connOverlay) connOverlay.classList.add('hidden');
+
     const videoArea = $('video-area');
     const wrapperId = `video-wrapper-${participant.identity}`;
     let wrapper = $(wrapperId);
@@ -851,6 +1014,7 @@ function renderParticipantVideo(participant, track) {
     }
 
     const video = wrapper.querySelector('video');
+    track.detach(video);
     track.attach(video);
     video.play().catch(e => console.warn('Autoplay prevented video:', e));
 }
@@ -859,6 +1023,12 @@ function handleTrackUnsubscribed(track, publication, participant) {
     track.detach();
     if (track.kind === 'video') {
        removeGuestVideo(participant.identity);
+    } else if (track.kind === 'audio') {
+        const audioEl = $(`audio-track-${participant.identity}`);
+        if (audioEl) {
+            audioEl.pause();
+            audioEl.remove();
+        }
     }
 }
 
@@ -887,6 +1057,7 @@ function updateVideoGrid() {
 }
 
 function handleAudioPlaybackStatus() {
+    if (!livekitRoom) return;
     console.log('Audio playback status changed. Can playback:', livekitRoom.canPlaybackAudio);
     if (livekitRoom.canPlaybackAudio) {
         hideAudioPrompt();
@@ -947,9 +1118,12 @@ function leaveLiveScreen() {
         socket.emit('leave-room', { roomName: currentStream.livekit_room });
     }
     if (livekitRoom) {
+        markManualLivekitDisconnect();
         livekitRoom.disconnect();
         livekitRoom = null;
     }
+    clearAudioElements();
+    closeGiftPanel();
     currentStream = null;
 
     isHost = false;
@@ -1006,6 +1180,8 @@ document.querySelectorAll('.type-btn').forEach(btn => {
 
 $('go-live-btn').addEventListener('click', async () => {
     if (!currentUser) { showAuthOverlay('login'); return; }
+    if (isGoLiveInProgress) return;
+    isGoLiveInProgress = true;
     const title = $('stream-title').value || 'My Live Stream';
     const category = $('stream-category').value;
     const type = document.querySelector('.type-btn.active')?.dataset.type || 'public';
@@ -1047,11 +1223,12 @@ $('go-live-btn').addEventListener('click', async () => {
             canPublish: true
         });
 
-        enterLiveScreen(stream);
-        connectToLiveKit(tkData.token, stream.livekit_room);
+        // 5. Enter live screen with the token we just fetched (prevents double connection)
+        await enterLiveScreen(stream, tkData.token);
     } catch (err) {
         alert('Failed to go live: ' + err.message);
     } finally {
+        isGoLiveInProgress = false;
         btn.disabled = false;
         btn.innerHTML = '<span class="live-dot-anim"></span> GO LIVE';
     }
@@ -1081,6 +1258,7 @@ function sendChatMessage(context) {
 }
 function appendChat(username, message, isSystem = false, avatar = '') {
     const box = $('chat-messages');
+    if (!box) return;
     const div = document.createElement('div');
     div.className = `chat-msg ${isSystem ? 'system-msg' : ''}`;
     
@@ -1103,7 +1281,19 @@ function sendReaction(emoji) {
     showFloatingReaction(emoji);
 }
 function showFloatingReaction(emoji) {
-    const overlay = $('reaction-overlay');
+    let overlay = $('reaction-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'reaction-overlay';
+        overlay.className = 'reaction-overlay';
+        const liveScreen = $('screen-live');
+        if (liveScreen) {
+            liveScreen.appendChild(overlay);
+        } else {
+            document.body.appendChild(overlay);
+        }
+        console.warn('[UI] reaction-overlay was missing. Created dynamically.');
+    }
     const el = document.createElement('div');
     el.className = 'floating-reaction';
     el.textContent = emoji;
@@ -1116,30 +1306,77 @@ function showFloatingReaction(emoji) {
 let giftsCache = [];
 async function loadGifts() {
     if (giftsCache.length) { renderGiftList(); return; }
-    try { giftsCache = await apiReq('GET', '/api/gifts'); renderGiftList(); } catch { }
+    try {
+        giftsCache = await retryAsync(() => apiReq('GET', '/api/gifts'), { retries: 1, delayMs: 500 });
+        renderGiftList();
+    } catch (err) {
+        console.error('Failed to load gifts:', err);
+    }
 }
 function renderGiftList() {
-    $('gift-list').innerHTML = giftsCache.map(g => `
-    <div class="gift-item" onclick="sendGift(${g.id})">
+    const giftList = $('gift-list');
+    if (!giftList) return;
+    giftList.innerHTML = giftsCache.map((g, idx) => `
+    <div class="gift-item" onclick="sendGiftByIndex(${idx})">
       <div class="gift-icon">${g.icon}</div>
       <div class="gift-name">${g.name}</div>
       <div class="gift-cost">🪙${g.coin_cost}</div>
     </div>
   `).join('');
 }
-function toggleGiftPanel() {
-    if (!currentUser) { showAuthOverlay('login'); return; }
-    $('gift-panel').classList.toggle('hidden');
+function sendGiftByIndex(index) {
+    const gift = giftsCache[index];
+    if (!gift) {
+        alert('Gift is unavailable. Please refresh and try again.');
+        return;
+    }
+    return sendGift(gift);
 }
-async function sendGift(giftId) {
+function toggleGiftPanel(forceOpen = null) {
+    if (!currentUser) { showAuthOverlay('login'); return; }
+    const panel = $('gift-panel');
+    if (!panel) return;
+    const shouldOpen = typeof forceOpen === 'boolean'
+        ? forceOpen
+        : panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !shouldOpen);
+}
+function closeGiftPanel() {
+    const panel = $('gift-panel');
+    if (panel) panel.classList.add('hidden');
+}
+async function sendGift(giftInput) {
     if (!currentUser || !currentStream) return;
-    const gift = giftsCache.find(g => g.id === giftId);
-    if (!gift) return;
+    if (isGiftSending) return;
+    isGiftSending = true;
+    const gift = typeof giftInput === 'object'
+        ? giftInput
+        : giftsCache.find((g) => String(g.id) === String(giftInput));
+    if (!gift) {
+        isGiftSending = false;
+        return;
+    }
     try {
+        let receiverId = currentStream.host_id ?? currentStream.user_id ?? currentStream.host?.id;
+        if (!receiverId && currentStream.id) {
+            const latestStream = await apiReq('GET', `/api/streams/${currentStream.id}`);
+            receiverId = latestStream.host_id ?? latestStream.user_id ?? latestStream.host?.id;
+            if (receiverId) currentStream.host_id = receiverId;
+        }
+        if (!receiverId) {
+            throw new Error('Unable to send gift: stream host is unavailable.');
+        }
+        if (Number(receiverId) === Number(currentUser.id)) {
+            throw new Error('You cannot send gifts to your own stream.');
+        }
+        if ((Number(currentUser.coin_balance) || 0) < (Number(gift.coin_cost) || 0)) {
+            throw new Error(`Insufficient coins. Need ${gift.coin_cost}, you have ${currentUser.coin_balance || 0}.`);
+        }
+
         await apiReq('POST', '/api/gifts/send', {
-            gift_id: giftId,
+            gift_id: gift.id,
             stream_id: currentStream.id,
-            receiver_id: currentStream.host_id,
+            receiver_id: receiverId,
         });
         socket?.emit('gift-sent', {
             roomName: currentStream?.livekit_room,
@@ -1147,11 +1384,16 @@ async function sendGift(giftId) {
             receiverUsername: currentStream?.username,
         });
         showGiftBurst(gift.icon, 'You', gift.name);
-        $('gift-panel').classList.add('hidden');
+        closeGiftPanel();
         // Refresh user coins locally
-        currentUser.coin_balance -= gift.coin_cost;
+        currentUser.coin_balance = Math.max(0, (Number(currentUser.coin_balance) || 0) - Number(gift.coin_cost || 0));
         localStorage.setItem('tl_user', JSON.stringify(currentUser));
-    } catch (err) { alert(err.message); }
+    } catch (err) {
+        console.error('Gift send failed:', err);
+        alert(err.message || 'Failed to send gift.');
+    } finally {
+        isGiftSending = false;
+    }
 }
 function showGiftBurst(icon, sender, name) {
     const el = document.createElement('div');
@@ -1163,6 +1405,7 @@ function showGiftBurst(icon, sender, name) {
 
 // ─── WALLET ────────────────────────────────────────────────────────────
 async function loadWallet() {
+    if (!$('wallet-balance') || !$('wallet-transactions')) return;
     $('wallet-balance').textContent = '...';
     $('wallet-transactions').innerHTML = '';
     try {
@@ -1349,6 +1592,7 @@ function formatTime(dateStr) {
 async function renderProfile() {
     const guest = $('profile-guest-msg');
     const user = $('profile-user');
+    if (!guest || !user) return;
     if (!currentUser) {
         guest.classList.remove('hidden');
         user.classList.add('hidden');
@@ -1636,11 +1880,7 @@ async function switchToGuestStreamer(roomName) {
         isGuestStreamer = true;
         
         // 2. Reconnect to LiveKit as Guest Streamer
-        // Note: we temporarily set isHost=true so connectToLiveKit publishes tracks
-        const originalIsHost = isHost;
-        isHost = true; 
         await connectToLiveKit(tkData.token, roomName);
-        isHost = originalIsHost; // Restore host status (usually false for guest)
         
         appendChat('System', '🎥 You are now live as a guest!', true);
     } catch (err) {
@@ -1656,7 +1896,9 @@ function stopGuestStream() {
     
     // Re-join as viewer (no publish)
     if (currentStream) {
-        enterLiveScreen(currentStream); 
+        enterLiveScreen(currentStream).catch((err) => {
+            console.error('Failed to switch back to viewer:', err);
+        });
     }
 }
 
@@ -1667,34 +1909,52 @@ function kickGuest(userId) {
 
 // ─── HOST CONTROLS ────────────────────────────────────────────────────
 async function toggleMic() {
-    if (!livekitRoom || !isHost) return;
-    const enabled = livekitRoom.localParticipant.isMicrophoneEnabled;
+    if (!livekitRoom || !shouldPublishLocalTracks()) return;
+    
+    // Check if we are still connecting
+    if (livekitRoom.state !== 'connected') {
+        alert('Still connecting to the stream engine... Please wait a second.');
+        return;
+    }
+
+    const enabled = !!livekitRoom.localParticipant.isMicrophoneEnabled;
     const btn = $('hud-mic-btn');
     btn.disabled = true; // Prevent double-clicks
 
     try {
         await livekitRoom.localParticipant.setMicrophoneEnabled(!enabled);
-        btn.classList.toggle('muted', enabled);
-        btn.textContent = enabled ? '🔇' : '🎤';
+        await syncHostControlButtons();
     } catch (e) {
         console.error('Failed to toggle mic:', e);
+        // Error-specific feedback
+        if (e.message.includes('timeout')) {
+            alert('Mic toggle timed out. The connection might be unstable.');
+        }
     } finally {
         btn.disabled = false;
     }
 }
 
 async function toggleCam() {
-    if (!livekitRoom || !isHost) return;
-    const enabled = livekitRoom.localParticipant.isCameraEnabled;
+    if (!livekitRoom || !shouldPublishLocalTracks()) return;
+    
+    if (livekitRoom.state !== 'connected') {
+        alert('Still connecting to the stream engine... Please wait a second.');
+        return;
+    }
+
+    const enabled = !!livekitRoom.localParticipant.isCameraEnabled;
     const btn = $('hud-cam-btn');
     btn.disabled = true;
 
     try {
         await livekitRoom.localParticipant.setCameraEnabled(!enabled);
-        btn.classList.toggle('muted', enabled);
-        btn.textContent = enabled ? '🚫' : '📷';
+        await syncHostControlButtons();
     } catch (e) {
         console.error('Failed to toggle camera:', e);
+        if (e.message.includes('timeout')) {
+            alert('Camera toggle timed out. The connection might be unstable.');
+        }
     } finally {
         btn.disabled = false;
     }
@@ -1777,10 +2037,20 @@ function closeModal(id) { $(id)?.classList.add('hidden'); }
     initSocket();
     initSearch();
     loadStreams();
+    document.addEventListener('click', (event) => {
+        const panel = $('gift-panel');
+        if (!panel || panel.classList.contains('hidden')) return;
+        const target = event.target;
+        const giftBtn = target?.closest?.('.live-actions-right .action-btn[title="Gift"]');
+        if (giftBtn) return;
+        if (!panel.contains(target)) {
+            closeGiftPanel();
+        }
+    });
     
     // Pre-fetch config to speed up connections
     apiReq('GET', '/api/config').then(data => {
-        cachedLivekitUrl = data.livekitUrl;
+        cachedLivekitUrl = normalizeLivekitUrl(data.livekitUrl);
     }).catch(() => {});
 
     // If no user, show auth on first load after brief delay
@@ -1790,3 +2060,11 @@ function closeModal(id) { $(id)?.classList.add('hidden'); }
         }, 1000);
     }
 })();
+
+window.addEventListener('error', (event) => {
+    console.error('[App Runtime Error]', event.error || event.message);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('[App Unhandled Promise Rejection]', event.reason);
+});

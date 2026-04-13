@@ -10,10 +10,14 @@ services:
         value: 3000
       - key: NODE_ENV
         value: production
-      - key: DB_PATH
-        value: ./server/data/tangolive.db
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false
       - key: LIVEKIT_URL
         sync: false
       - key: LIVEKIT_API_KEY

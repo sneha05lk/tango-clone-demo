@@ -1,5 +1,6 @@
 const { AccessToken } = require('livekit-server-sdk');
 const jwt = require('jsonwebtoken');
+const { getRequiredEnv } = require('../config/security');
 
 // POST /api/livekit/token
 const getToken = async (req, res) => {
@@ -16,7 +17,7 @@ const getToken = async (req, res) => {
     if (!user && req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         try {
             const token = req.headers.authorization.split(' ')[1];
-            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolivemysecertqaz123');
+            const decoded = jwt.verify(token, getRequiredEnv('JWT_SECRET'));
             user = { username: identity || `User_${decoded.id}`, id: decoded.id }; 
         } catch (e) {
             console.error('[LiveKit Auth] Soft auth failed:', e.message);

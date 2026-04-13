@@ -1,4 +1,5 @@
 const { db } = require('../config/db');
+const { debitCoins, creditCoins } = require('../utils/balance');
 
 // GET /api/gifts - list all gifts
 const getGifts = async (req, res) => {
@@ -26,34 +27,15 @@ const sendGift = async (req, res) => {
 
         if (giftError || !gift) return res.status(404).json({ message: 'Gift not found' });
 
-        // 2. Check Sender Balance
-        const { data: sender, error: senderError } = await db
-            .from('users')
-            .select('coin_balance')
-            .eq('id', sender_id)
-            .single();
+        const debitResult = await debitCoins(sender_id, gift.coin_cost);
+        if (debitResult.error) return res.status(500).json({ message: debitResult.error.message });
+        if (debitResult.insufficient) return res.status(400).json({ message: 'Insufficient coins' });
 
-        if (senderError || !sender) return res.status(404).json({ message: 'Sender not found' });
-        if (sender.coin_balance < gift.coin_cost)
-            return res.status(400).json({ message: 'Insufficient coins' });
-
-        // Get Receiver Balance
-        const { data: receiver, error: receiverError } = await db
-             .from('users')
-             .select('coin_balance')
-             .eq('id', receiver_id)
-             .single();
-
-        if (receiverError || !receiver) return res.status(404).json({ message: 'Receiver not found' });
-
-        // Note: For a true production app, this should be done using a Postgres RPC to avoid race conditions.
-        // 3. Deduct from sender
-        const newSenderBalance = sender.coin_balance - gift.coin_cost;
-        await db.from('users').update({ coin_balance: newSenderBalance }).eq('id', sender_id);
-
-        // 4. Credit to receiver
-        const newReceiverBalance = receiver.coin_balance + gift.coin_cost;
-        await db.from('users').update({ coin_balance: newReceiverBalance }).eq('id', receiver_id);
+        const creditResult = await creditCoins(receiver_id, gift.coin_cost);
+        if (creditResult.error) {
+            await creditCoins(sender_id, gift.coin_cost);
+            return res.status(500).json({ message: 'Failed to credit receiver. Sender was refunded.' });
+        }
 
         // 5. Record transaction
         const { data: tx, error: txError } = await db
@@ -71,7 +53,11 @@ const sendGift = async (req, res) => {
             .select('id')
             .single();
 
-        if (txError) return res.status(500).json({ message: txError.message });
+        if (txError) {
+            await debitCoins(receiver_id, gift.coin_cost);
+            await creditCoins(sender_id, gift.coin_cost);
+            return res.status(500).json({ message: txError.message });
+        }
         
         res.status(201).json({ message: 'Gift sent!', gift, transactionId: tx.id });
     } catch (e) {

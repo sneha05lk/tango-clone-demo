@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../config/db');
+const { getRequiredEnv } = require('../config/security');
 
 const protect = async (req, res, next) => {
     let token;
@@ -9,7 +10,7 @@ const protect = async (req, res, next) => {
     if (!token) return res.status(401).json({ message: 'Not authorized, no token' });
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolive_secret_key');
+        const decoded = jwt.verify(token, getRequiredEnv('JWT_SECRET'));
         
         const { data: user, error } = await db
             .from('users')

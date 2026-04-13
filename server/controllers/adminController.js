@@ -1,4 +1,5 @@
 const { db } = require('../config/db');
+const { creditCoins } = require('../utils/balance');
 
 // GET /api/admin/stats
 const getStats = async (req, res) => {
@@ -116,26 +117,32 @@ const getWithdrawals = async (req, res) => {
 const updateWithdrawal = async (req, res) => {
     const { status } = req.body; // 'approved' or 'rejected'
     try {
+        if (!['approved', 'rejected'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status' });
+        }
+
+        const { data: existing, error: existingError } = await db
+            .from('withdrawals')
+            .select('id, amount, user_id, status')
+            .eq('id', req.params.id)
+            .single();
+
+        if (existingError || !existing) return res.status(404).json({ message: 'Withdrawal not found' });
+        if (existing.status !== 'pending') return res.status(400).json({ message: 'Withdrawal already processed' });
+
         const { error } = await db
             .from('withdrawals')
             .update({ status })
+            .eq('status', 'pending')
             .eq('id', req.params.id);
 
         if (error) return res.status(500).json({ message: error.message });
 
         if (status === 'rejected') {
-            // Refund coins if rejected
-            const { data: w } = await db
-                 .from('withdrawals')
-                 .select('amount, user_id')
-                 .eq('id', req.params.id)
-                 .single();
-
-            if (w) {
-                const { data: u } = await db.from('users').select('coin_balance').eq('id', w.user_id).single();
-                if (u) {
-                    await db.from('users').update({ coin_balance: u.coin_balance + w.amount }).eq('id', w.user_id);
-                }
+            const refundResult = await creditCoins(existing.user_id, existing.amount);
+            if (refundResult.error) {
+                await db.from('withdrawals').update({ status: 'pending' }).eq('id', req.params.id);
+                return res.status(500).json({ message: 'Unable to refund coins safely. Withdrawal reset to pending.' });
             }
         }
         res.json({ message: `Withdrawal ${status}` });

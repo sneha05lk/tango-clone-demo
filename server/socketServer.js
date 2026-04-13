@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('./config/db');
+const { getRequiredEnv } = require('./config/security');
 
 // ─── ONLINE USERS (userId -> socketId) ───────────────────────────────────
 const onlineUsers = {};
@@ -11,7 +12,7 @@ module.exports = (io) => {
         const token = socket.handshake.auth?.token;
         if (token) {
             try {
-                const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tangolive_secret_key');
+                const decoded = jwt.verify(token, getRequiredEnv('JWT_SECRET'));
                 const { data: user, error } = await db
                      .from('users')
                      .select('id, username, avatar, coin_balance, is_banned')

@@ -1,8 +1,9 @@
 const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcrypt');
+const { getRequiredEnv } = require('./security');
 
-const supabaseUrl = process.env.SUPABASE_URL || 'YOUR_SUPABASE_URL';
-const supabaseKey = process.env.SUPABASE_KEY || 'YOUR_SUPABASE_SERVICE_ROLE_KEY';
+const supabaseUrl = getRequiredEnv('SUPABASE_URL');
+const supabaseKey = getRequiredEnv('SUPABASE_KEY');
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -10,28 +11,37 @@ const initDB = async () => {
     console.log('Supabase initialized.');
     
     try {
-        // Seed default admin user if not exists
+        const seedEnabled = process.env.ENABLE_ADMIN_SEED === 'true';
+        if (!seedEnabled) {
+            return;
+        }
+
+        const adminEmail = getRequiredEnv('ADMIN_SEED_EMAIL').toLowerCase();
+        const adminUsername = process.env.ADMIN_SEED_USERNAME?.trim() || 'admin';
+        const adminPassword = getRequiredEnv('ADMIN_SEED_PASSWORD');
+
+        // Seed admin user if not exists (explicitly opt-in only)
         const { data: existingAdmin } = await supabase
             .from('users')
             .select('id')
-            .eq('role', 'admin')
+            .eq('email', adminEmail)
             .limit(1)
             .single();
 
         if (!existingAdmin) {
-            const hash = await bcrypt.hash('admin123', 10);
+            const hash = await bcrypt.hash(adminPassword, 10);
             const { error: insertError } = await supabase
                 .from('users')
                 .insert([{
-                    username: 'admin',
-                    email: 'admin@tangolive.com',
+                    username: adminUsername,
+                    email: adminEmail,
                     password: hash,
                     coin_balance: 9999999,
                     role: 'admin'
                 }]);
             
             if (!insertError) {
-                console.log('Default admin user created: admin / admin123');
+                console.log(`Admin seed user created: ${adminEmail}`);
             } else {
                 console.error("Failed to seed admin:", insertError.message);
             }

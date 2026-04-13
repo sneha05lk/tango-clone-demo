@@ -1,9 +1,10 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../config/db');
 const bcrypt = require('bcrypt');
+const { getRequiredEnv } = require('../config/security');
 
 const generateToken = (id) =>
-    jwt.sign({ id }, process.env.JWT_SECRET || 'tangolive_secret_key', { expiresIn: '30d' });
+    jwt.sign({ id }, getRequiredEnv('JWT_SECRET'), { expiresIn: '30d' });
 
 // POST /api/auth/register
 const register = async (req, res) => {

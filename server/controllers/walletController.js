@@ -1,4 +1,5 @@
 const { db } = require('../config/db');
+const { debitCoins, creditCoins } = require('../utils/balance');
 
 // GET /api/wallet - get wallet info
 const getWallet = async (req, res) => {
@@ -47,14 +48,13 @@ const requestWithdrawal = async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const { data: user } = await db
-            .from('users')
-            .select('coin_balance')
-            .eq('id', userId)
-            .single();
+        if (!Number.isInteger(amount) || amount <= 0) {
+            return res.status(400).json({ message: 'Amount must be a positive integer' });
+        }
 
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        if (user.coin_balance < amount) return res.status(400).json({ message: 'Insufficient balance' });
+        const debitResult = await debitCoins(userId, amount);
+        if (debitResult.error) return res.status(500).json({ message: debitResult.error.message });
+        if (debitResult.insufficient) return res.status(400).json({ message: 'Insufficient balance' });
 
         const { data: withdrawal, error } = await db
             .from('withdrawals')
@@ -62,16 +62,13 @@ const requestWithdrawal = async (req, res) => {
             .select('id')
             .single();
 
-        if (error) return res.status(500).json({ message: error.message });
-
-        // Deduct coins immediately (pending admin approval)
-        await db
-            .from('users')
-            .update({ coin_balance: user.coin_balance - amount })
-            .eq('id', userId);
+        if (error) {
+            await creditCoins(userId, amount);
+            return res.status(500).json({ message: error.message });
+        }
 
         // Record the transaction as a withdrawal
-        db.from('transactions')
+        const { error: txError } = await db.from('transactions')
           .insert([{
               sender_id: userId,
               receiver_id: null,
@@ -81,7 +78,13 @@ const requestWithdrawal = async (req, res) => {
               gift_icon: '💸',
               amount,
               type: 'withdrawal'
-          }]).then(); // async, don't wait
+          }]);
+
+        if (txError) {
+            await db.from('withdrawals').delete().eq('id', withdrawal.id);
+            await creditCoins(userId, amount);
+            return res.status(500).json({ message: txError.message });
+        }
 
         res.status(201).json({ message: 'Withdrawal request submitted', id: withdrawal.id });
     } catch (e) {
@@ -111,32 +114,29 @@ const buyCoins = async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const { data: user } = await db
-             .from('users')
-             .select('coin_balance')
-             .eq('id', userId)
-             .single();
-
-        if (user) {
-             await db
-                 .from('users')
-                 .update({ coin_balance: user.coin_balance + coins })
-                 .eq('id', userId);
-
-             await db.from('transactions')
-                 .insert([{
-                     sender_id: userId,
-                     receiver_id: userId,
-                     gift_name: 'Coin Purchase',
-                     gift_icon: '💳',
-                     amount: coins,
-                     type: 'purchase'
-                 }]);
-
-             res.status(200).json({ message: 'Coins purchased successfully!', coinsAdded: coins });
-        } else {
-             res.status(404).json({ message: 'User not found' });
+        if (!Number.isInteger(coins) || coins <= 0) {
+            return res.status(400).json({ message: 'Coins must be a positive integer' });
         }
+
+        const creditResult = await creditCoins(userId, coins);
+        if (creditResult.error) return res.status(500).json({ message: creditResult.error.message });
+
+        const { error: txError } = await db.from('transactions')
+            .insert([{
+                sender_id: userId,
+                receiver_id: userId,
+                gift_name: 'Coin Purchase',
+                gift_icon: '💳',
+                amount: coins,
+                type: 'purchase'
+            }]);
+
+        if (txError) {
+            await debitCoins(userId, coins);
+            return res.status(500).json({ message: txError.message });
+        }
+
+        res.status(200).json({ message: 'Coins purchased successfully!', coinsAdded: coins, packageId });
     } catch (e) {
          res.status(500).json({ message: 'Server error' });
     }
