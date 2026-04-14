@@ -755,7 +755,8 @@ body::before {
 /* End stream button */
 .btn-end-stream {
   position: absolute;
-  top: 12px;
+  /* Keep this below the top HUD so host mic/cam never overlap */
+  top: 72px;
   right: 14px;
   z-index: 20;
 }
