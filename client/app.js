@@ -818,9 +818,12 @@ async function syncHostControlButtons() {
     const camBtn = $('hud-cam-btn');
     const audioPub = Array.from(livekitRoom.localParticipant.audioTrackPublications.values())[0];
     const micEnabledFromPub = audioPub ? !audioPub.isMuted : null;
+    const micEnabledFromLocalTrack = mediaStream?.getAudioTracks?.()[0]?.enabled;
     const micEnabled = micEnabledFromPub !== null
         ? micEnabledFromPub
-        : !!livekitRoom.localParticipant.isMicrophoneEnabled;
+        : (typeof micEnabledFromLocalTrack === 'boolean'
+            ? micEnabledFromLocalTrack
+            : !!livekitRoom.localParticipant.isMicrophoneEnabled);
     const camEnabled = livekitRoom.localParticipant.isCameraEnabled;
     if (micBtn) {
         micBtn.classList.toggle('muted', !micEnabled);
@@ -1957,50 +1960,40 @@ async function toggleMic() {
     }
 
     const audioPub = Array.from(livekitRoom.localParticipant.audioTrackPublications.values())[0];
-    const enabled = audioPub ? !audioPub.isMuted : !!livekitRoom.localParticipant.isMicrophoneEnabled;
+    const mediaTrackEnabled = mediaStream?.getAudioTracks?.()[0]?.enabled;
+    const enabled = audioPub
+        ? !audioPub.isMuted
+        : (typeof mediaTrackEnabled === 'boolean'
+            ? mediaTrackEnabled
+            : !!livekitRoom.localParticipant.isMicrophoneEnabled);
     const btn = $('hud-mic-btn');
     if (!btn) return;
     btn.disabled = true; // Prevent double-clicks
 
     try {
         const targetEnabled = !enabled;
-        if (targetEnabled) {
-            // Re-enable any local preview mic tracks first.
-            if (mediaStream) {
-                mediaStream.getAudioTracks().forEach((t) => { t.enabled = true; });
-            }
-            await livekitRoom.localParticipant.setMicrophoneEnabled(true);
-            const pubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
-            for (const pub of pubs) {
-                const track = pub?.track;
-                if (!track) continue;
-                if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = true;
+        // Keep publication stable; only toggle source + track mute state.
+        if (mediaStream) {
+            mediaStream.getAudioTracks().forEach((t) => { t.enabled = targetEnabled; });
+        }
+        await livekitRoom.localParticipant.setMicrophoneEnabled(targetEnabled);
+        const pubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
+        for (const pub of pubs) {
+            const track = pub?.track;
+            if (!track) continue;
+            if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = targetEnabled;
+            if (targetEnabled) {
                 if (typeof track.unmute === 'function') await track.unmute();
-            }
-            await livekitRoom.startAudio().catch(() => {});
-        } else {
-            // Hard mute path: disable all local mic sources + mute/unpublish all audio pubs.
-            if (mediaStream) {
-                mediaStream.getAudioTracks().forEach((t) => { t.enabled = false; });
-            }
-            await livekitRoom.localParticipant.setMicrophoneEnabled(false);
-            const pubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
-            for (const pub of pubs) {
-                const track = pub?.track;
-                if (!track) continue;
-                if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = false;
-                if (typeof track.mute === 'function') await track.mute();
-                // Some browsers/SDK paths can keep sending from stale pubs; unpublish as a hard stop.
-                try {
-                    await livekitRoom.localParticipant.unpublishTrack(track);
-                } catch (unpubErr) {
-                    console.warn('Audio unpublish warning:', unpubErr);
-                }
+            } else if (typeof track.mute === 'function') {
+                await track.mute();
             }
         }
 
-        const verifyPubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
-        const isActuallyEnabled = verifyPubs.some((pub) => !pub.isMuted);
+        const verifyPub = Array.from(livekitRoom.localParticipant.audioTrackPublications.values())[0];
+        const verifyLocal = mediaStream?.getAudioTracks?.()[0]?.enabled;
+        const isActuallyEnabled = verifyPub
+            ? !verifyPub.isMuted
+            : (typeof verifyLocal === 'boolean' ? verifyLocal : targetEnabled);
         if (isActuallyEnabled !== targetEnabled) {
             throw new Error('Microphone state did not update on published track');
         }
