@@ -239,6 +239,35 @@ const requestJoin = async (req, res) => {
 const handleRequest = async (req, res) => {
     const { status } = req.body; // 'approved' or 'rejected'
     try {
+        if (!['approved', 'rejected'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status' });
+        }
+
+        const { data: request, error: requestError } = await db
+            .from('stream_requests')
+            .select('id, stream_id, status')
+            .eq('id', req.params.requestId)
+            .single();
+
+        if (requestError || !request) {
+            return res.status(404).json({ message: 'Request not found' });
+        }
+
+        const { data: stream, error: streamError } = await db
+            .from('streams')
+            .select('id')
+            .eq('id', request.stream_id)
+            .eq('host_id', req.user.id)
+            .single();
+
+        if (streamError || !stream) {
+            return res.status(403).json({ message: 'Not authorized' });
+        }
+
+        if (request.status && request.status !== 'pending') {
+            return res.status(409).json({ message: 'Request already handled' });
+        }
+
         const { error } = await db
             .from('stream_requests')
             .update({ status })

@@ -3,7 +3,8 @@
    Main SPA logic: auth, navigation, streams, socket.io, gifts
 ═══════════════════════════════════════════════════════════════ */
 
-const API = '';  // same origin
+const RAW_API_BASE = (window.__APP_CONFIG__?.apiBase || '').trim();
+const API = RAW_API_BASE.replace(/\/+$/, '');
 let token = localStorage.getItem('tl_token');
 let currentUser = JSON.parse(localStorage.getItem('tl_user') || 'null');
 let socket = null;
@@ -30,6 +31,13 @@ let homeRefreshTimer = null;
 
 // ─── UTILITY ─────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
+const toAssetUrl = (url) => {
+    if (!url) return '';
+    if (/^(https?:)?\/\//i.test(url) || /^data:|^blob:/i.test(url)) return url;
+    if (!API) return url;
+    if (url.startsWith('/')) return `${API}${url}`;
+    return `${API}/${url}`;
+};
 const apiReq = async (method, path, body) => {
     try {
         const res = await fetch(API + path, {
@@ -94,7 +102,9 @@ function createGlobalErrorContainer() {
 function initSocket() {
     if (socket) return;
     // Remove transport restriction to allow polling fallback for better stability on unstable networks
-    socket = io({ auth: { token: token || null } });
+    socket = API
+        ? io(API, { auth: { token: token || null } })
+        : io({ auth: { token: token || null } });
 
     socket.on('viewer-count', ({ count }) => {
         $('hud-viewers').textContent = count;
@@ -129,8 +139,8 @@ function initSocket() {
         appendChat('System', `${username} joined 🎉`, true);
     });
 
-    socket.on('join-request-received', ({ userId, username, streamId }) => {
-        showJoinRequestToast(userId, username, streamId);
+    socket.on('join-request-received', ({ userId, username, streamId, requestId }) => {
+        showJoinRequestToast(userId, username, streamId, requestId);
     });
 
     // Listen for own join response (e.g., for private/group streams)
@@ -248,10 +258,11 @@ function renderSearchResults(streams, users) {
         html += '<h3 style="grid-column: 1/-1; font-size: 1.1rem; margin: 15px 0 10px;">Users</h3>';
         html += users.map(u => {
             const initials = u.username.charAt(0).toUpperCase();
-            const avatarStyle = u.avatar ? `background-image:url(${u.avatar});background-size:cover;background-position:center;` : '';
+            const avatarUrl = toAssetUrl(u.avatar);
+            const avatarStyle = avatarUrl ? `background-image:url(${avatarUrl});background-size:cover;background-position:center;` : '';
             return `
                 <div class="glass" style="display:flex; align-items:center; gap:12px; padding:10px; border-radius:12px; cursor:pointer;" onclick="viewUserProfile(${u.id})">
-                    <div class="user-avatar-sm" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border-radius:50%; ${avatarStyle}">${u.avatar ? '' : initials}</div>
+                    <div class="user-avatar-sm" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); width:40px; height:40px; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border-radius:50%; ${avatarStyle}">${avatarUrl ? '' : initials}</div>
                     <div style="font-weight:600;">${u.username}</div>
                 </div>
             `;
@@ -517,7 +528,9 @@ function captureThumbnail() {
 function renderStreamFeedHTML(streams) {
     return streams.map((s, i) => {
         const initials = s.username ? s.username.charAt(0).toUpperCase() : '?';
-        const thumbBg = s.thumbnail ? `background-image:url(${s.thumbnail});background-size:cover;background-position:center;` : '';
+        const thumbUrl = toAssetUrl(s.thumbnail);
+        const avatarUrl = toAssetUrl(s.avatar);
+        const thumbBg = thumbUrl ? `background-image:url(${thumbUrl});background-size:cover;background-position:center;` : '';
 
         return `
     <div class="stream-card" style="animation-delay:${i * 0.07}s" onclick="openStream(${s.id})">
@@ -535,7 +548,7 @@ function renderStreamFeedHTML(streams) {
       </div>
       <div class="stream-card-info">
         <div style="display:flex; align-items:center; gap:8px">
-           <div class="thumb-avatar" style="width:20px;height:20px;font-size:0.6rem;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;border-radius:50%;background-size:cover;background-position:center;${s.avatar ? `background-image:url(${s.avatar})` : ''}">${s.avatar ? '' : initials}</div>
+           <div class="thumb-avatar" style="width:20px;height:20px;font-size:0.6rem;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;border-radius:50%;background-size:cover;background-position:center;${avatarUrl ? `background-image:url(${avatarUrl})` : ''}">${avatarUrl ? '' : initials}</div>
            <div class="stream-card-host">${s.username}</div>
         </div>
         <div class="stream-card-meta">
@@ -812,7 +825,11 @@ async function syncHostControlButtons() {
     if (!shouldPublishLocalTracks() || !livekitRoom?.localParticipant) return;
     const micBtn = $('hud-mic-btn');
     const camBtn = $('hud-cam-btn');
-    const micEnabled = livekitRoom.localParticipant.isMicrophoneEnabled;
+    const audioPub = Array.from(livekitRoom.localParticipant.audioTrackPublications.values())[0];
+    const micEnabledFromPub = audioPub ? !audioPub.isMuted : null;
+    const micEnabled = micEnabledFromPub !== null
+        ? micEnabledFromPub
+        : !!livekitRoom.localParticipant.isMicrophoneEnabled;
     const camEnabled = livekitRoom.localParticipant.isCameraEnabled;
     if (micBtn) {
         micBtn.classList.toggle('muted', !micEnabled);
@@ -1205,7 +1222,7 @@ $('go-live-btn').addEventListener('click', async () => {
 
         // 3. Create stream with thumbnail (multipart request – can't use apiReq helper)
         btn.textContent = '🚀 Going Live...';
-        const res = await fetch('/api/streams', {
+        const res = await fetch(`${API}/api/streams`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
             body: formData,
@@ -1266,7 +1283,8 @@ function appendChat(username, message, isSystem = false, avatar = '') {
         div.innerHTML = `<span class="chat-msg-text" style="color:var(--accent2); font-weight:600">${message}</span>`;
     } else {
         const initials = username ? username.charAt(0).toUpperCase() : '?';
-        const avatarHtml = `<div class="chat-avatar" style="${avatar ? `background-image:url(${avatar});background-size:cover;background-position:center;` : `background:var(--accent)`}">${avatar ? '' : initials}</div>`;
+        const avatarUrl = toAssetUrl(avatar);
+        const avatarHtml = `<div class="chat-avatar" style="${avatarUrl ? `background-image:url(${avatarUrl});background-size:cover;background-position:center;` : `background:var(--accent)`}">${avatarUrl ? '' : initials}</div>`;
         div.innerHTML = `${avatarHtml}<div class="chat-msg-content"><span class="chat-msg-name">${username}</span><span class="chat-msg-text">${message}</span></div>`;
     }
     
@@ -1507,10 +1525,11 @@ async function renderChatList() {
         }
         list.innerHTML = convos.map(c => {
             const initials = c.partner_name ? c.partner_name.charAt(0).toUpperCase() : '?';
-            const avatarStyle = c.partner_avatar ? `background-image:url(${c.partner_avatar}); background-size:cover; background-position:center;` : '';
+            const partnerAvatarUrl = toAssetUrl(c.partner_avatar);
+            const avatarStyle = partnerAvatarUrl ? `background-image:url(${partnerAvatarUrl}); background-size:cover; background-position:center;` : '';
             return `
       <div class="chat-list-item glass" onclick="openChatThread(${c.partner_id}, '${c.partner_name}', '${c.partner_avatar || ''}')" style="display:flex;align-items:center;padding:12px;border-radius:12px;gap:12px;cursor:pointer">
-         <div class="profile-avatar-lg" style="width:48px;height:48px;font-size:1.2rem;background:linear-gradient(135deg,#c084fc,#818cf8);${avatarStyle}">${c.partner_avatar ? '' : initials}</div>
+         <div class="profile-avatar-lg" style="width:48px;height:48px;font-size:1.2rem;background:linear-gradient(135deg,#c084fc,#818cf8);${avatarStyle}">${partnerAvatarUrl ? '' : initials}</div>
          <div style="flex:1">
            <div style="font-weight:600;margin-bottom:4px;color:var(--text)">${c.partner_name}</div>
            <div style="color:var(--text);opacity:0.7;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">${c.last_message}</div>
@@ -1656,7 +1675,7 @@ async function saveProfile() {
             const formData = new FormData();
             formData.append('avatar', avatarFile);
             
-            const res = await fetch('/api/users/profile/avatar', {
+            const res = await fetch(`${API}/api/users/profile/avatar`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
@@ -1799,11 +1818,12 @@ function renderFollowList(users) {
 
     container.innerHTML = users.map(u => {
         const initials = u.username.charAt(0).toUpperCase();
-        const avatarStyle = u.avatar ? `background-image:url(${u.avatar}); background-size:cover; background-position:center;` : '';
+        const avatarUrl = toAssetUrl(u.avatar);
+        const avatarStyle = avatarUrl ? `background-image:url(${avatarUrl}); background-size:cover; background-position:center;` : '';
 
         return `
             <div class="glass" style="display:flex; align-items:center; gap:12px; padding:15px; border-radius:16px; cursor:pointer; margin-bottom:10px;" onclick="viewUserProfile(${u.id})">
-                <div class="user-avatar-sm" style="width:48px; height:48px; border:2px solid var(--glass-border); background: linear-gradient(135deg, var(--accent), var(--accent2)); ${avatarStyle}">${u.avatar ? '' : initials}</div>
+                <div class="user-avatar-sm" style="width:48px; height:48px; border:2px solid var(--glass-border); background: linear-gradient(135deg, var(--accent), var(--accent2)); ${avatarStyle}">${avatarUrl ? '' : initials}</div>
                 <div style="flex:1">
                     <div style="font-weight:700; font-size:1.05rem">${u.username}</div>
                     <div style="font-size:0.85rem; color:rgba(255,255,255,0.6)">View Profile</div>
@@ -1911,24 +1931,75 @@ function kickGuest(userId) {
 async function toggleMic() {
     if (!livekitRoom || !shouldPublishLocalTracks()) return;
     
-    // Check if we are still connecting
-    if (livekitRoom.state !== 'connected') {
+    const connectionState = String(livekitRoom.state || '').toLowerCase();
+    const isConnected =
+        connectionState === 'connected' ||
+        (typeof LivekitClient !== 'undefined' &&
+            livekitRoom.state === LivekitClient.ConnectionState?.Connected);
+    if (!isConnected) {
         alert('Still connecting to the stream engine... Please wait a second.');
         return;
     }
 
-    const enabled = !!livekitRoom.localParticipant.isMicrophoneEnabled;
+    const audioPub = Array.from(livekitRoom.localParticipant.audioTrackPublications.values())[0];
+    const enabled = audioPub ? !audioPub.isMuted : !!livekitRoom.localParticipant.isMicrophoneEnabled;
     const btn = $('hud-mic-btn');
+    if (!btn) return;
     btn.disabled = true; // Prevent double-clicks
 
     try {
-        await livekitRoom.localParticipant.setMicrophoneEnabled(!enabled);
+        const targetEnabled = !enabled;
+        if (targetEnabled) {
+            // Re-enable any local preview mic tracks first.
+            if (mediaStream) {
+                mediaStream.getAudioTracks().forEach((t) => { t.enabled = true; });
+            }
+            await livekitRoom.localParticipant.setMicrophoneEnabled(true);
+            const pubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
+            for (const pub of pubs) {
+                const track = pub?.track;
+                if (!track) continue;
+                if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = true;
+                if (typeof track.unmute === 'function') await track.unmute();
+            }
+            await livekitRoom.startAudio().catch(() => {});
+        } else {
+            // Hard mute path: disable all local mic sources + mute/unpublish all audio pubs.
+            if (mediaStream) {
+                mediaStream.getAudioTracks().forEach((t) => { t.enabled = false; });
+            }
+            await livekitRoom.localParticipant.setMicrophoneEnabled(false);
+            const pubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
+            for (const pub of pubs) {
+                const track = pub?.track;
+                if (!track) continue;
+                if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = false;
+                if (typeof track.mute === 'function') await track.mute();
+                // Some browsers/SDK paths can keep sending from stale pubs; unpublish as a hard stop.
+                try {
+                    await livekitRoom.localParticipant.unpublishTrack(track);
+                } catch (unpubErr) {
+                    console.warn('Audio unpublish warning:', unpubErr);
+                }
+            }
+        }
+
+        const verifyPubs = Array.from(livekitRoom.localParticipant.audioTrackPublications.values());
+        const isActuallyEnabled = verifyPubs.some((pub) => !pub.isMuted);
+        if (isActuallyEnabled !== targetEnabled) {
+            throw new Error('Microphone state did not update on published track');
+        }
         await syncHostControlButtons();
     } catch (e) {
         console.error('Failed to toggle mic:', e);
+        const msg = String(e?.message || '');
         // Error-specific feedback
-        if (e.message.includes('timeout')) {
+        if (msg.includes('timeout')) {
             alert('Mic toggle timed out. The connection might be unstable.');
+        } else if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied')) {
+            alert('Microphone permission is blocked. Please allow mic access in your browser.');
+        } else {
+            alert('Could not toggle microphone. Please try again.');
         }
     } finally {
         btn.disabled = false;
@@ -1982,17 +2053,26 @@ function toggleViewerMute() {
 }
 
 // ─── PRIVATE/GROUP JOIN REQUEST ────────────────────────────────────────
-function showJoinRequestModal(stream) {
-    $('joinreq-status').textContent = 'Waiting for host...';
+async function showJoinRequestModal(stream) {
+    $('joinreq-status').textContent = 'Sending request...';
     $('joinreq-modal').classList.remove('hidden');
-    // Notify host via socket
     initSocket();
     joinRoom(stream.livekit_room);
-    socket?.emit('join-request', { roomName: stream.livekit_room, streamId: stream.id });
+    try {
+        const reqData = await apiReq('POST', `/api/streams/${stream.id}/request`, {});
+        $('joinreq-status').textContent = 'Waiting for host...';
+        socket?.emit('join-request', {
+            roomName: stream.livekit_room,
+            streamId: stream.id,
+            requestId: reqData?.requestId || null
+        });
+    } catch (err) {
+        $('joinreq-status').textContent = `❌ ${err.message || 'Failed to send request.'}`;
+    }
 }
 
-function showJoinRequestToast(userId, username, streamId) {
-    pendingJoinRequest = { userId, streamId };
+function showJoinRequestToast(userId, username, streamId, requestId = null) {
+    pendingJoinRequest = { userId, streamId, requestId };
     $('join-req-username').textContent = username;
     $('join-request-toast').classList.remove('hidden');
     setTimeout(() => $('join-request-toast').classList.add('hidden'), 15000);
@@ -2001,11 +2081,17 @@ function showJoinRequestToast(userId, username, streamId) {
 async function respondToJoinRequest(approved) {
     $('join-request-toast').classList.add('hidden');
     if (!pendingJoinRequest || !currentStream) return;
-    const { userId } = pendingJoinRequest;
+    const { userId, requestId } = pendingJoinRequest;
     const status = approved ? 'approved' : 'rejected';
 
-    // Update DB
-    try { await apiReq('POST', `/api/streams/${currentStream.id}/request`, {}); } catch { }
+    if (requestId) {
+        try {
+            await apiReq('PUT', `/api/streams/requests/${requestId}`, { status });
+        } catch (err) {
+            alert(`Failed to ${status} request: ${err.message}`);
+            return;
+        }
+    }
     socket?.emit('join-request-response', { userId, approved, roomName: currentStream?.livekit_room });
     pendingJoinRequest = null;
 }
@@ -2016,8 +2102,9 @@ function closeModal(id) { $(id)?.classList.add('hidden'); }
 // ─── HELPERS ───────────────────────────────────────────────────────────
 function setAvatar(el, avatarUrl, username) {
     if (!el) return;
-    if (avatarUrl) {
-        el.style.backgroundImage = `url(${avatarUrl})`;
+    const normalizedAvatar = toAssetUrl(avatarUrl);
+    if (normalizedAvatar) {
+        el.style.backgroundImage = `url(${normalizedAvatar})`;
         el.textContent = '';
         el.classList.add('has-img');
         el.style.backgroundSize = 'cover';

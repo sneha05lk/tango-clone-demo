@@ -138,7 +138,7 @@ module.exports = (io) => {
         });
 
         // ── JOIN REQUEST FLOW (private/group) ─────────────────────────────
-        socket.on('join-request', ({ roomName, streamId }) => {
+        socket.on('join-request', ({ roomName, streamId, requestId }) => {
             if (!socket.user) return;
             // Notify the host's socket (host is in the room)
             socket.to(roomName).emit('join-request-received', {
@@ -146,6 +146,7 @@ module.exports = (io) => {
                 username: socket.user.username,
                 avatar: socket.user.avatar,
                 streamId,
+                requestId,
             });
         });
 
