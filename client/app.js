@@ -19,7 +19,6 @@ let livekitRoom = null;
 let pendingGuestInvite = null; // { hostId, roomName }
 let isGuestStreamer = false;
 let activeGuestIds = new Set(); // To track UI elements for guests
-let isMutedByViewer = false; // Viewer-side global mute state
 let cachedLivekitUrl = null;
 let currentScreen = 'home'; // Tracking the active screen state
 let livekitConnectSeq = 0;
@@ -622,9 +621,6 @@ async function enterLiveScreen(stream, existingToken = null) {
     const hostCtrls = $('host-controls');
     if (hostCtrls) hostCtrls.classList.toggle('hidden', !isHost);
     
-    const viewerCtrls = $('viewer-controls');
-    if (viewerCtrls) viewerCtrls.classList.toggle('hidden', isHost);
-
     // Initial state for host/viewer toggles
     if (isHost) {
         const micBtn = $('hud-mic-btn');
@@ -639,13 +635,6 @@ async function enterLiveScreen(stream, existingToken = null) {
         }
         const vPlaceholder = $('video-placeholder');
         if (vPlaceholder) vPlaceholder.classList.add('hidden');
-    } else {
-        isMutedByViewer = false;
-        const vMuteBtn = $('viewer-mute-btn');
-        if (vMuteBtn) {
-            vMuteBtn.classList.remove('muted');
-            vMuteBtn.textContent = '🔊';
-        }
     }
 
     // Clear chat
@@ -975,16 +964,14 @@ function handleTrackSubscribed(track, publication, participant) {
 
         const el = track.attach();
         el.id = audioId;
-        el.muted = isMutedByViewer;
+        el.muted = false;
         el.autoplay = true;
         el.playsInline = true;
         document.body.appendChild(el); 
-        if (!isMutedByViewer) {
-            el.play().catch(e => {
-                console.warn('Initial audio play() failed:', e);
-                showAudioPrompt();
-            });
-        }
+        el.play().catch(e => {
+            console.warn('Initial audio play() failed:', e);
+            showAudioPrompt();
+        });
         console.log('Audio track attached for:', participant.identity);
     }
 }
@@ -1860,7 +1847,7 @@ function handleTrackMuteChange(pub, part, isMuted) {
         if (audioEl) {
             // If the host muted their mic, we mute the local playback element
             // (LiveKit usually stops the stream, but this ensures UI/state consistency)
-            audioEl.muted = isMuted || isMutedByViewer;
+            audioEl.muted = isMuted;
         }
     }
 }
@@ -2028,27 +2015,6 @@ async function toggleCam() {
         }
     } finally {
         btn.disabled = false;
-    }
-}
-
-function toggleViewerMute() {
-    isMutedByViewer = !isMutedByViewer;
-    const btn = $('viewer-mute-btn');
-    if (btn) {
-        btn.classList.toggle('muted', isMutedByViewer);
-        btn.textContent = isMutedByViewer ? '🔇' : '🔊';
-    }
-
-    // Apply to all currently attached audio elements
-    document.querySelectorAll('audio[id^="audio-track-"]').forEach(el => {
-        el.muted = isMutedByViewer;
-        if (!isMutedByViewer) {
-            el.play().catch(() => {});
-        }
-    });
-
-    if (!isMutedByViewer && livekitRoom) {
-        livekitRoom.startAudio().catch(() => {});
     }
 }
 
