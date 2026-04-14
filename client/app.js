@@ -30,6 +30,8 @@ let homeRefreshTimer = null;
 
 // ─── UTILITY ─────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
+const isMobileDevice = () =>
+    /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || '');
 const toAssetUrl = (url) => {
     if (!url) return '';
     if (/^(https?:)?\/\//i.test(url) || /^data:|^blob:/i.test(url)) return url;
@@ -852,17 +854,22 @@ async function connectToLiveKit(token, roomName) {
     }
     clearAudioElements();
 
-    const highPreset = LivekitClient.VideoPresets?.h1080 || LivekitClient.VideoPresets?.h720;
+    const preferMobilePreset = isMobileDevice();
+    const publishPreset = preferMobilePreset
+        ? (LivekitClient.VideoPresets?.h540 || LivekitClient.VideoPresets?.h720)
+        : (LivekitClient.VideoPresets?.h1080 || LivekitClient.VideoPresets?.h720);
+    const preferredCodec = preferMobilePreset ? 'vp8' : 'h264';
     livekitRoom = new LivekitClient.Room({
         adaptiveStream: true,
         dynacast: true,
         videoCaptureDefaults: {
-            resolution: highPreset.resolution,
+            resolution: publishPreset.resolution,
         },
         publishDefaults: {
-            simulcast: true,
-            videoEncoding: highPreset.encoding,
-            screenShareEncoding: highPreset.encoding,
+            simulcast: !preferMobilePreset,
+            videoEncoding: publishPreset.encoding,
+            screenShareEncoding: publishPreset.encoding,
+            videoCodec: preferredCodec,
         }
     });
 
@@ -1147,18 +1154,26 @@ function leaveLiveScreen() {
 let mediaStream = null;
 async function initCamera() {
     try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30, max: 30 }
-            },
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
+        const useMobileProfile = isMobileDevice();
+        const cameraProfiles = useMobileProfile
+            ? [
+                { video: { width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' }, audio: true },
+                { video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' }, audio: true },
+            ]
+            : [
+                { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' }, audio: true },
+                { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' }, audio: true },
+            ];
+        let lastErr = null;
+        for (const constraints of cameraProfiles) {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                break;
+            } catch (err) {
+                lastErr = err;
             }
-        });
+        }
+        if (!mediaStream) throw lastErr || new Error('Unable to access camera');
         $('camera-preview').srcObject = mediaStream;
     } catch {
         console.warn('Camera not available');
