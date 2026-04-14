@@ -852,15 +852,17 @@ async function connectToLiveKit(token, roomName) {
     }
     clearAudioElements();
 
+    const highPreset = LivekitClient.VideoPresets?.h1080 || LivekitClient.VideoPresets?.h720;
     livekitRoom = new LivekitClient.Room({
         adaptiveStream: true,
         dynacast: true,
         videoCaptureDefaults: {
-            resolution: LivekitClient.VideoPresets.h720.resolution,
+            resolution: highPreset.resolution,
         },
         publishDefaults: {
             simulcast: true,
-            videoEncoding: LivekitClient.VideoPresets.h720.encoding,
+            videoEncoding: highPreset.encoding,
+            screenShareEncoding: highPreset.encoding,
         }
     });
 
@@ -1145,7 +1147,18 @@ function leaveLiveScreen() {
 let mediaStream = null;
 async function initCamera() {
     try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 30, max: 30 }
+            },
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            }
+        });
         $('camera-preview').srcObject = mediaStream;
     } catch {
         console.warn('Camera not available');
